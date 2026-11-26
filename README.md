@@ -43,16 +43,21 @@ To install this module, follow the setup instructions for the **extras** reposit
 
 ### Building an RPM
 
+The spec file [`alertmanager-icinga-bridge.spec`](alertmanager-icinga-bridge.spec) compiles the bridge
+from a source tarball of the repository and runs the tests; the GitLab pipeline
+([`.gitlab-ci.yml`](.gitlab-ci.yml)) does this on AlmaLinux 9 and keeps the RPMs as job artifacts.
+`Version` in the spec is the package version (starting at 0.1.0): a tag `v<version>` builds release 1,
+other pipelines build snapshots like `0.1.0-0.42.gabc1234`. To build by hand:
+
 ```bash
-make        # same as: make rpm
+dnf install rpm-build systemd-rpm-macros golang git-core
+mkdir -p ~/rpmbuild/SOURCES
+git archive --prefix=alertmanager-icinga-bridge-0.1.0/ -o ~/rpmbuild/SOURCES/alertmanager-icinga-bridge-0.1.0.tar.gz HEAD
+rpmbuild -ba alertmanager-icinga-bridge.spec
 ```
 
-`make rpm` builds the binary RPM and the source RPM into `dist/` (`rpmbuild` and `systemd-rpm-macros`
-are needed, plus Go at least as new as `go.mod` requires, in `$PATH` or via `make rpm GO=/path/to/go`).
-The source tarball includes the vendored Go modules, so `rpmbuild` itself needs no network access.
-The version comes from the latest `v*` tag (`0.0.0` without one); untagged commits go into the release,
-e.g. `1.2.3-0.4.gabc1234`. Extra `rpmbuild` options go into `RPMBUILD_FLAGS`, e.g.
-`make rpm RPMBUILD_FLAGS="--without check"` to skip the tests.
+Go modules are downloaded during the build (set `GOPROXY` for a private proxy). The distribution's Go
+may be older than `go.mod` requires; Go then fetches the required toolchain itself.
 
 The package installs:
 
@@ -65,7 +70,7 @@ The package installs:
 * the example Icinga configuration and mapping file under `/usr/share/doc/alertmanager-icinga-bridge`
 
 ```bash
-dnf install ./dist/alertmanager-icinga-bridge-*.x86_64.rpm
+dnf install ./alertmanager-icinga-bridge-0.1.0-*.x86_64.rpm
 vi /etc/sysconfig/alertmanager-icinga-bridge
 systemctl enable --now alertmanager-icinga-bridge
 ```

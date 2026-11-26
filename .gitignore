@@ -9,3 +9,5 @@ coverage.html
 coverage.out
 dist/
 vendor/
+rpmbuild/
+.go/
