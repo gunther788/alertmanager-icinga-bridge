@@ -1,56 +1,6 @@
-# Builds the RPM from alertmanager-icinga-bridge.spec; the spec does the
-# compilation (and runs the tests).
-#
-# Release numbers: a tag v<version> (matching Version in the spec) builds
-# release 1; every other pipeline builds a snapshot 0.<pipeline>.g<commit>,
-# which sorts before the release of the same version.
+---
 
-stages:
-  - package
-
-variables:
-  # Keep downloaded modules and Go toolchains in the project for the cache
-  GOPATH: $CI_PROJECT_DIR/.go
-  GOTOOLCHAIN: auto
-  SPEC: alertmanager-icinga-bridge.spec
-
-.rpm:
-  stage: package
-  before_script:
-    - dnf install -y --setopt=install_weak_deps=False rpm-build systemd-rpm-macros golang git-core
-  script:
-    - NAME=$(rpmspec -q --srpm --qf '%{name}' "$SPEC")
-    - VERSION=$(rpmspec -q --srpm --qf '%{version}' "$SPEC")
-    - |
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        if [ "$CI_COMMIT_TAG" != "v$VERSION" ]; then
-          echo "Tag $CI_COMMIT_TAG does not match Version $VERSION in $SPEC" >&2
-          exit 1
-        fi
-        RELEASE=1
-      else
-        RELEASE="0.${CI_PIPELINE_IID}.g${CI_COMMIT_SHORT_SHA}"
-      fi
-    - mkdir -p rpmbuild/SOURCES
-    - git archive --format=tar.gz --prefix="$NAME-$VERSION/" -o "rpmbuild/SOURCES/$NAME-$VERSION.tar.gz" HEAD
-    - >-
-      rpmbuild -ba
-      --define "_topdir $CI_PROJECT_DIR/rpmbuild"
-      --define "pkg_release $RELEASE"
-      --define "pkg_commit $CI_COMMIT_SHA"
-      "$SPEC"
-  cache:
-    key:
-      files:
-        - go.sum
-    paths:
-      - .go/pkg/mod/
-  artifacts:
-    paths:
-      - rpmbuild/RPMS/
-      - rpmbuild/SRPMS/
-    expire_in: 30 days
-
-rpm:el9:
-  extends: .rpm
-  image: almalinux:9
+include:
+  - project: 'ops/packages/templates'
+    ref: main
+    file: '.gitlab-ci-mock.yml'

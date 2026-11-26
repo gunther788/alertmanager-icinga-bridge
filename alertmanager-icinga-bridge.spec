@@ -1,23 +1,25 @@
-# Builds the bridge from a source tarball of the repository, as the GitLab
-# pipeline (.gitlab-ci.yml) does:
+# Built by the GitLab pipeline (template ops/packages/templates,
+# .gitlab-ci-mock.yml): "mock --buildsrpm --sources=<checkout>" copies the
+# whole checkout into the SOURCES directory, where this spec packs it into
+# Source0 (see below), and the RPM is then rebuilt from the source RPM.
+# By hand, the same works with:
 #
-#   git archive --prefix=alertmanager-icinga-bridge-0.1.0/ \
-#       -o ~/rpmbuild/SOURCES/alertmanager-icinga-bridge-0.1.0.tar.gz HEAD
-#   rpmbuild -ba alertmanager-icinga-bridge.spec
+#   rpmbuild -ba --define "_sourcedir $PWD" alertmanager-icinga-bridge.spec
 #
-# Go modules are downloaded during the build (GOPROXY, default
-# proxy.golang.org) unless the tarball contains a vendor directory. If the
-# installed Go is older than go.mod requires, Go fetches the required
-# toolchain (GOTOOLCHAIN=auto).
+# Go modules (and, if the distribution's Go is older than go.mod requires,
+# the Go toolchain) are downloaded during the build, so it needs network
+# access (mock --enable-network) unless the tarball contains a vendor
+# directory. GOPROXY and GOSUMDB can point to a private proxy.
 #
-# Optional defines: pkg_release (e.g. 0.42.gabc1234 for snapshot builds),
-# pkg_commit (shown by --version); "--without check" skips the tests.
+# Bump Version (or Release) for every change that should reach the
+# repository; the pipeline builds whatever the spec says.
+#
+# Optional defines: pkg_commit (shown by --version, default: the commit of
+# the checkout); "--without check" skips the tests.
 
 %global debug_package %{nil}
 %global service alertmanager-icinga-bridge
 
-%{!?pkg_release: %global pkg_release 1}
-%{!?pkg_commit: %global pkg_commit unknown}
 %{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}
 
 %bcond_without check
@@ -33,7 +35,7 @@ if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLA
 
 Name:           alertmanager-icinga-bridge
 Version:        0.1.0
-Release:        %{pkg_release}%{?dist}
+Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
 # The bridge is BSD-3-Clause, internal/icinga2 is Apache-2.0;
@@ -41,6 +43,24 @@ Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 License:        BSD-3-Clause AND Apache-2.0 AND MIT
 URL:            https://github.com/NETWAYS/alertmanager-icinga-bridge
 Source0:        %{name}-%{version}.tar.gz
+
+# When the SOURCES directory is a copy of the checkout (it contains go.mod),
+# pack it into Source0, with the commit from .git in a file COMMIT. When the
+# source RPM is rebuilt, SOURCES holds only the tarball and this does nothing.
+%(cd "%{_sourcedir}" 2>/dev/null && test -f go.mod && test -f %{name}.spec && {
+    head=$(cat .git/HEAD 2>/dev/null)
+    case "$head" in ("ref: "*) head=$(cat ".git/${head#ref: }" 2>/dev/null) ;; esac
+    echo "${head:-unknown}" > COMMIT
+    tmp=$(mktemp)
+    tar -czf "$tmp" --exclude=./.git --exclude='./%{name}-*.tar.*' --exclude='./*.rpm' \
+        --exclude=./rpmbuild --exclude=./.go \
+        --transform 's,^\.,%{name}-%{version},' . &&
+        mv "$tmp" %{name}-%{version}.tar.gz
+    rm -f "$tmp"
+} >/dev/null 2>&1)
+
+# Shell expression, evaluated during the build
+%{!?pkg_commit: %global pkg_commit $(cat COMMIT 2>/dev/null || echo unknown)}
 
 # Any Go that can switch toolchains (>= 1.21), see above
 BuildRequires:  golang >= 1.21

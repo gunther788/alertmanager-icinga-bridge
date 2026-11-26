@@ -43,21 +43,26 @@ To install this module, follow the setup instructions for the **extras** reposit
 
 ### Building an RPM
 
-The spec file [`alertmanager-icinga-bridge.spec`](alertmanager-icinga-bridge.spec) compiles the bridge
-from a source tarball of the repository and runs the tests; the GitLab pipeline
-([`.gitlab-ci.yml`](.gitlab-ci.yml)) does this on AlmaLinux 9 and keeps the RPMs as job artifacts.
-`Version` in the spec is the package version (starting at 0.1.0): a tag `v<version>` builds release 1,
-other pipelines build snapshots like `0.1.0-0.42.gabc1234`. To build by hand:
+[`alertmanager-icinga-bridge.spec`](alertmanager-icinga-bridge.spec) builds the package; the GitLab
+pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) only includes the shared mock template
+(`ops/packages/templates`, `.gitlab-ci-mock.yml`), which builds the source RPM and the RPM with mock
+(currently for `epel-9`) and publishes them to the repository. The GitLab project has to be named
+`alertmanager-icinga-bridge`, as the template looks for `${CI_PROJECT_NAME}.spec`.
+
+`mock --buildsrpm --sources=<checkout>` copies the checkout into the SOURCES directory; the spec packs it
+into its source tarball there (with the commit, shown by `--version`). Go modules and, as EL9's Go is older
+than `go.mod` requires, the Go toolchain are downloaded during the build (mock runs with `--enable-network`;
+set `GOPROXY`/`GOSUMDB` for a private proxy).
+
+The spec's `Version` (starting at 0.1.0) and `Release` are the package version: bump them for every change
+that should reach the repository, as each pipeline builds whatever the spec says.
+
+To build by hand from a checkout:
 
 ```bash
-dnf install rpm-build systemd-rpm-macros golang git-core
-mkdir -p ~/rpmbuild/SOURCES
-git archive --prefix=alertmanager-icinga-bridge-0.1.0/ -o ~/rpmbuild/SOURCES/alertmanager-icinga-bridge-0.1.0.tar.gz HEAD
-rpmbuild -ba alertmanager-icinga-bridge.spec
+dnf install rpm-build systemd-rpm-macros golang
+rpmbuild -ba --define "_sourcedir $PWD" alertmanager-icinga-bridge.spec
 ```
-
-Go modules are downloaded during the build (set `GOPROXY` for a private proxy). The distribution's Go
-may be older than `go.mod` requires; Go then fetches the required toolchain itself.
 
 The package installs:
 
