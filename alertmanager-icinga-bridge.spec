@@ -1,30 +1,49 @@
-# Build with `make rpm`, which creates the source tarball (including the
-# vendored Go modules, so the build needs no network access) and passes
-# pkg_version, pkg_release and gobin. Go >= the version in go.mod is required;
-# it is not a BuildRequires because EL9 ships an older one.
+# Builds the bridge from a source tarball of the repository, as the GitLab
+# pipeline (.gitlab-ci.yml) does:
+#
+#   git archive --prefix=alertmanager-icinga-bridge-0.1.0/ \
+#       -o ~/rpmbuild/SOURCES/alertmanager-icinga-bridge-0.1.0.tar.gz HEAD
+#   rpmbuild -ba alertmanager-icinga-bridge.spec
+#
+# Go modules are downloaded during the build (GOPROXY, default
+# proxy.golang.org) unless the tarball contains a vendor directory. If the
+# installed Go is older than go.mod requires, Go fetches the required
+# toolchain (GOTOOLCHAIN=auto).
+#
+# Optional defines: pkg_release (e.g. 0.42.gabc1234 for snapshot builds),
+# pkg_commit (shown by --version); "--without check" skips the tests.
 
 %global debug_package %{nil}
 %global service alertmanager-icinga-bridge
 
-%{!?pkg_version: %global pkg_version 0.0.0}
 %{!?pkg_release: %global pkg_release 1}
 %{!?pkg_commit: %global pkg_commit unknown}
-%{!?gobin: %global gobin go}
 %{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}
 
 %bcond_without check
 
+# Distribution Go packages set GOTOOLCHAIN=local (and may set GOPROXY=direct)
+# in their go.env; settings from the build environment win over these defaults.
+%global go_env \
+export CGO_ENABLED=0 \
+export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" \
+export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}" \
+export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
+if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
+
 Name:           alertmanager-icinga-bridge
-Version:        %{pkg_version}
+Version:        0.1.0
 Release:        %{pkg_release}%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
 # The bridge is BSD-3-Clause, internal/icinga2 is Apache-2.0;
-# vendored: kong (MIT), go.yaml.in/yaml (Apache-2.0 AND MIT)
+# linked in: kong (MIT), go.yaml.in/yaml (Apache-2.0 AND MIT)
 License:        BSD-3-Clause AND Apache-2.0 AND MIT
 URL:            https://github.com/NETWAYS/alertmanager-icinga-bridge
 Source0:        %{name}-%{version}.tar.gz
 
+# Any Go that can switch toolchains (>= 1.21), see above
+BuildRequires:  golang >= 1.21
 BuildRequires:  systemd-rpm-macros
 Requires(pre):  shadow-utils
 %{?systemd_requires}
@@ -39,19 +58,15 @@ in Icinga on demand.
 %autosetup -p1
 
 %build
-export CGO_ENABLED=0
-export GOFLAGS="-mod=vendor -trimpath"
-export GOTOOLCHAIN=local
-%{gobin} build \
+%{go_env}
+go build \
     -ldflags "-s -w -B gobuildid -X main.version=%{version} -X main.commit=%{pkg_commit}" \
     -o %{name} .
 
 %if %{with check}
 %check
-export CGO_ENABLED=0
-export GOFLAGS="-mod=vendor"
-export GOTOOLCHAIN=local
-%{gobin} test ./...
+%{go_env}
+go test ./...
 %endif
 
 %install
@@ -95,5 +110,6 @@ exit 0
 %config(noreplace) %{_sysconfdir}/%{name}/host-mapping.yaml
 
 %changelog
-* Thu Nov 26 2026 alertmanager-icinga-bridge maintainers - 0.0.0-1
-- Package with systemd unit, sysconfig file and host mapping file
+* Thu Nov 26 2026 alertmanager-icinga-bridge maintainers - 0.1.0-1
+- First package: hosts derived from alert labels, systemd unit,
+  sysconfig file and host mapping file
