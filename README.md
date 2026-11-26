@@ -41,6 +41,35 @@ To install this module, follow the setup instructions for the **extras** reposit
 
 `apt install netways-alertmanager-icinga-bridge`
 
+### Building an RPM
+
+```bash
+make        # same as: make rpm
+```
+
+`make rpm` builds the binary RPM and the source RPM into `dist/` (`rpmbuild` and `systemd-rpm-macros`
+are needed, plus Go at least as new as `go.mod` requires, in `$PATH` or via `make rpm GO=/path/to/go`).
+The source tarball includes the vendored Go modules, so `rpmbuild` itself needs no network access.
+The version comes from the latest `v*` tag (`0.0.0` without one); untagged commits go into the release,
+e.g. `1.2.3-0.4.gabc1234`. Extra `rpmbuild` options go into `RPMBUILD_FLAGS`, e.g.
+`make rpm RPMBUILD_FLAGS="--without check"` to skip the tests.
+
+The package installs:
+
+* `/usr/bin/alertmanager-icinga-bridge`
+* `alertmanager-icinga-bridge.service`, running as the `alertmanager-icinga-bridge` user;
+  `systemctl reload` re-reads the host mapping file
+* `/etc/sysconfig/alertmanager-icinga-bridge` (mode 0600) with the settings as environment variables
+* `/etc/alertmanager-icinga-bridge/` (group `alertmanager-icinga-bridge`) with an empty `host-mapping.yaml`;
+  put the webhook TLS certificate and key here
+* the example Icinga configuration and mapping file under `/usr/share/doc/alertmanager-icinga-bridge`
+
+```bash
+dnf install ./dist/alertmanager-icinga-bridge-*.x86_64.rpm
+vi /etc/sysconfig/alertmanager-icinga-bridge
+systemctl enable --now alertmanager-icinga-bridge
+```
+
 ## Usage
 
 When started, Alertmanager-Icinga-Bridge listens to HTTP requests on the following paths:
