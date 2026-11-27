@@ -86,7 +86,7 @@ type CLI struct {
 
 	// Icinga Client
 	IcingaURL                []string `kong:"required,env='ALERTMANAGER_ICINGA_BRIDGE_ICINGA_URL',help='Icinga API URL (can be repeated)'"`
-	IcingaHostname           string   `kong:"required,env='ALERTMANAGER_ICINGA_BRIDGE_ICINGA_HOSTNAME',help='Icinga host name to manage services for'"`
+	IcingaHostname           string   `kong:"default='alertmanager-bridge',env='ALERTMANAGER_ICINGA_BRIDGE_ICINGA_HOSTNAME',help='Icinga host of the bridge itself: heartbeat service and alerts without host labels (created if missing)'"`
 	DisableKeepAlives        bool     `kong:"default=false,env='ALERTMANAGER_ICINGA_BRIDGE_DISABLE_KEEPALIVES',help='Disable HTTP keepalives'"`
 	DisplayNameAsServiceName bool     `kong:"default=false,env='ALERTMANAGER_ICINGA_BRIDGE_DISPLAY_NAME_AS_SERVICE_NAME',help='Set the Icinga service display name to the generated service name'"`
 	IcingaInsecureTLS        bool     `kong:"default=false,env='ALERTMANAGER_ICINGA_BRIDGE_ICINGA_INSECURE_TLS',help='Skip Icinga TLS verification'"`
@@ -126,7 +126,7 @@ type CLI struct {
 	StaticServiceVars map[string]string `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_STATIC_SERVICE_VAR',help='Custom variable to be set for created Icinga services (variable=value, can be repeated)'"`
 
 	// Hosts derived from alert labels
-	HostLabels         []string          `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_HOST_LABELS',help='Alert labels whose values form the Icinga host name, e.g. cluster,project (hosts are created on demand; empty disables this)'"`
+	HostLabels         []string          `kong:"default='cluster,project',env='ALERTMANAGER_ICINGA_BRIDGE_HOST_LABELS',help='Alert labels whose values form the Icinga host name (hosts are created on demand)'"`
 	HostLabelSeparator string            `kong:"default='-',env='ALERTMANAGER_ICINGA_BRIDGE_HOST_LABEL_SEPARATOR',help='Separator between the label values in derived host names'"`
 	HostNamePrefix     string            `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_HOST_NAME_PREFIX',help='Prefix for derived host names'"`
 	HostMappingFile    string            `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_HOST_MAPPING_FILE',help='YAML/JSON file that maps label values (e.g. project IDs to names) for derived host names; reloaded on SIGHUP'"`
