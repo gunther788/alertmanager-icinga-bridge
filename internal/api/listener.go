@@ -259,7 +259,7 @@ func (l *Listener) PlanAlert(ctx context.Context, alert *Alert) (Plan, error) {
 		HostName:  hostName,
 		HostCheck: useHostCheck,
 		// Get the Plugin Output from the first Annotation we find that has some data
-		PluginOutput: l.pluginOutputGetter.GetField(alert, exitCode),
+		PluginOutput: withCluster(l.pluginOutputGetter.GetField(alert, exitCode), alert.Labels),
 		ExitStatus:   exitCode,
 		DisplayName:  displayName,
 	}
@@ -535,7 +535,7 @@ func (l *Listener) prepareService(hostName, serviceName, displayName string, ale
 		HostName:           hostName,
 		CheckCommand:       l.config.CheckCommand,
 		EnableActiveChecks: l.config.ActiveChecks,
-		Notes:              l.notesTextGetter.GetField(&alert, status),
+		Notes:              withCluster(l.notesTextGetter.GetField(&alert, status), alert.Labels),
 		ActionURL:          alert.GeneratorURL,
 		NotesURL:           l.notesURLGetter.GetField(&alert, status),
 		CheckInterval:      l.config.ChecksInterval.Seconds(),
@@ -559,7 +559,7 @@ func (l *Listener) prepareService(hostName, serviceName, displayName string, ale
 	// Check if this is a heartbeat service and adjust serviceData accordingly
 	if heartbeatInterval.Seconds() > 0 {
 		// Set dummy text to message annotation on alert
-		svc.Vars["dummy_text"] = l.pluginOutputGetter.GetField(&alert, status)
+		svc.Vars["dummy_text"] = withCluster(l.pluginOutputGetter.GetField(&alert, status), alert.Labels)
 		// Set exitStatus for missed heartbeat to Alert's severity
 		svc.Vars["dummy_state"] = status
 		// Add 10% onto requested check interval to allow some network latency for the check results
@@ -570,6 +570,21 @@ func (l *Listener) prepareService(hostName, serviceName, displayName string, ale
 	}
 
 	return svc
+}
+
+// emptyClusterPattern matches texts ending in "on cluster ." (with optional trailing
+// whitespace): alert rules that reference a cluster label that is only added after
+// the rule was evaluated (external labels, or the labels of a polled Alertmanager)
+var emptyClusterPattern = regexp.MustCompile(`\bon cluster \.(\s*)$`)
+
+// withCluster inserts the alert's cluster label into a text ending in "on cluster ."
+func withCluster(text string, labels map[string]string) string {
+	cluster := labels["cluster"]
+	if cluster == "" {
+		return text
+	}
+
+	return emptyClusterPattern.ReplaceAllLiteralString(text, "on cluster "+cluster+".")
 }
 
 // generateServiceName generates a unique internal service name used for Icinga
