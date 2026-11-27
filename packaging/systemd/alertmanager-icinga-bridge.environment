@@ -25,12 +25,12 @@ ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN=CHANGEME
 
 # Hosts derived from alert labels (created on demand)
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_LABELS=cluster,project
-#ALERTMANAGER_ICINGA_BRIDGE_HOST_MAPPING_FILE=/etc/alertmanager-icinga-bridge/host-mapping.yaml
+#ALERTMANAGER_ICINGA_BRIDGE_HOST_MAPPING_FILE=/etc/alertmanager-icinga-bridge/host-mapping.yml
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_TEMPLATE=generic-host
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_KEEP_FOR=168h
 
 # Poll the Alertmanagers listed in this file (reloaded by systemctl reload)
-#ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/alertmanagers.yaml
+#ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/alertmanagers.yml
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_INTERVAL=1m
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER=severity=~"warning|critical"
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_RECEIVER=

@@ -69,14 +69,15 @@ The package installs:
 * `/usr/bin/alertmanager-icinga-bridge`
 * `alertmanager-icinga-bridge.service`, running as the `alertmanager-icinga-bridge` user;
   `systemctl reload` re-reads the host mapping file
-* `/etc/sysconfig/alertmanager-icinga-bridge` (mode 0600) with the settings as environment variables
-* `/etc/alertmanager-icinga-bridge/` (group `alertmanager-icinga-bridge`) with an empty `host-mapping.yaml`;
-  put the webhook TLS certificate and key here
+* `/etc/alertmanager-icinga-bridge/` (group `alertmanager-icinga-bridge`) with
+  * `environment` (mode 0600): the settings as environment variables
+  * empty `host-mapping.yml` and `alertmanagers.yml`
+  * put the webhook TLS certificate and key here, too
 * the example Icinga configuration and mapping file under `/usr/share/doc/alertmanager-icinga-bridge`
 
 ```bash
-dnf install ./alertmanager-icinga-bridge-0.2.0-*.x86_64.rpm
-vi /etc/sysconfig/alertmanager-icinga-bridge
+dnf install ./alertmanager-icinga-bridge-0.2.1-*.x86_64.rpm
+vi /etc/alertmanager-icinga-bridge/environment
 systemctl enable --now alertmanager-icinga-bridge
 ```
 
@@ -114,7 +115,7 @@ alertmanager-icinga-bridge \
  --tls-key-path /etc/alertmanager-icinga-bridge/tls.key \
  --bearer-token token-cluster-a,token-cluster-b \
  --host-labels cluster,project \
- --host-mapping-file /etc/alertmanager-icinga-bridge/host-mapping.yaml
+ --host-mapping-file /etc/alertmanager-icinga-bridge/host-mapping.yml
 ```
 
 ## Configuration
