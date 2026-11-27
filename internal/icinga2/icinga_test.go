@@ -275,3 +275,32 @@ func TestUnauthorizedIsReported(t *testing.T) {
 		}
 	}
 }
+
+func TestQueriesUseMethodOverride(t *testing.T) {
+	var seen []string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.Header.Get("X-HTTP-Method-Override")+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(testConfig(ts.URL), testLogger())
+	ctx := context.Background()
+
+	_, _ = c.GetServices(ctx, QueryFilter{Filter: "true"})
+	_, _ = c.GetHosts(ctx, QueryFilter{Filter: "true"})
+	_, _ = c.GetServiceStates(ctx, "true")
+	_, _ = c.GetDowntimes(ctx, "true")
+
+	want := []string{
+		"POST GET /v1/objects/services/",
+		"POST GET /v1/objects/hosts/",
+		"POST GET /v1/objects/services/",
+		"POST GET /v1/objects/downtimes/",
+	}
+
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("want %q, got %q", want, seen)
+	}
+}

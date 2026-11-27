@@ -58,7 +58,7 @@ func (f *fakeIcinga) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(data, &body)
 
 	switch {
-	case path == "/v1/objects/services/" && r.Method == http.MethodGet:
+	case path == "/v1/objects/services/" && method(r) == http.MethodGet:
 		results := []any{}
 		for _, attrs := range f.services {
 			results = append(results, map[string]any{"attrs": attrs})
@@ -75,7 +75,7 @@ func (f *fakeIcinga) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/v1/objects/hosts/"):
 		name := strings.TrimPrefix(path, "/v1/objects/hosts/")
 
-		switch r.Method {
+		switch method(r) {
 		case http.MethodGet:
 			if !f.hosts[name] {
 				http.NotFound(w, r)
@@ -106,7 +106,7 @@ func (f *fakeIcinga) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeIcinga) service(w http.ResponseWriter, r *http.Request, name string, body map[string]any) {
-	switch r.Method {
+	switch method(r) {
 	case http.MethodGet:
 		attrs, ok := f.services[name]
 		if !ok {
@@ -447,4 +447,13 @@ func TestLoadTargets(t *testing.T) {
 			}
 		})
 	}
+}
+
+// method returns the HTTP method, honouring X-HTTP-Method-Override
+func method(r *http.Request) string {
+	if m := r.Header.Get("X-HTTP-Method-Override"); m != "" {
+		return m
+	}
+
+	return r.Method
 }

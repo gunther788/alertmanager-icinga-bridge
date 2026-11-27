@@ -107,7 +107,10 @@ func (c *Client) Do(req *http.Request, path string) (*http.Response, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			fmt.Fprintf(&endpointErrors, " error: '%d' from '%s': %s", resp.StatusCode, req.URL, readErrorBody(resp))
+			errBody := readErrorBody(resp)
+
+			c.logger.Warn(fmt.Sprintf("Icinga API at %s returned HTTP %d. Trying next endpoint", req.URL, resp.StatusCode), "component", "icinga", "error", errBody)
+			fmt.Fprintf(&endpointErrors, " error: '%d' from '%s': %s", resp.StatusCode, req.URL, errBody)
 
 			continue
 		}
@@ -274,7 +277,7 @@ func (c *Client) GetServices(ctx context.Context, filter QueryFilter) ([]Service
 		return []Service{}, fmt.Errorf("error encoding request: %w", errMarshal)
 	}
 
-	req, errReq := http.NewRequestWithContext(ctx, http.MethodGet, "", bytes.NewReader(data))
+	req, errReq := newQueryRequest(ctx, data)
 
 	if errReq != nil {
 		return []Service{}, errReq
@@ -445,7 +448,7 @@ func (c *Client) GetHosts(ctx context.Context, filter QueryFilter) ([]Host, erro
 		return nil, fmt.Errorf("error encoding request: %w", errMarshal)
 	}
 
-	req, errReq := http.NewRequestWithContext(ctx, http.MethodGet, "", bytes.NewReader(data))
+	req, errReq := newQueryRequest(ctx, data)
 
 	if errReq != nil {
 		return nil, errReq
@@ -626,7 +629,7 @@ func (c *Client) query(ctx context.Context, path string, body any, results any) 
 		return fmt.Errorf("error encoding request: %w", errMarshal)
 	}
 
-	req, errReq := http.NewRequestWithContext(ctx, http.MethodGet, "", bytes.NewReader(data))
+	req, errReq := newQueryRequest(ctx, data)
 
 	if errReq != nil {
 		return errReq
@@ -685,6 +688,20 @@ func (c *Client) action(ctx context.Context, path string, body any) error {
 	}
 
 	return checkStatus(res)
+}
+
+// newQueryRequest returns a query with a JSON body (filter, attrs). It is sent as POST with
+// X-HTTP-Method-Override: GET, as the Icinga documentation recommends: proxies and other
+// middle boxes do not reliably pass GET requests with a body.
+func newQueryRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Http-Method-Override", http.MethodGet)
+
+	return req, nil
 }
 
 // StatusError is returned for responses from the Icinga API that indicate a failure

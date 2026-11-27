@@ -61,7 +61,7 @@ func TestCollectHosts(t *testing.T) {
 		results := []any{}
 
 		switch {
-		case r.Method == http.MethodGet && path == "/v1/objects/hosts/":
+		case method(r) == http.MethodGet && path == "/v1/objects/hosts/":
 			if filter.Filter != `host.vars.bridge_uuid == "unittest"` {
 				t.Errorf("unexpected host filter %q", filter.Filter)
 			}
@@ -69,7 +69,7 @@ func TestCollectHosts(t *testing.T) {
 			for _, h := range hostList {
 				results = append(results, map[string]any{"attrs": h})
 			}
-		case r.Method == http.MethodGet && path == "/v1/objects/services/":
+		case method(r) == http.MethodGet && path == "/v1/objects/services/":
 			switch {
 			case filter.Filter == `service.vars.bridge_uuid == "unittest"`:
 				// A firing service keeps its host
@@ -141,11 +141,11 @@ func TestHeartbeat_CreatesBridgeObjects(t *testing.T) {
 		path, _ := url.PathUnescape(r.URL.EscapedPath())
 
 		switch {
-		case path == "/v1/objects/hosts/alertmanager-bridge" && r.Method == http.MethodGet:
+		case path == "/v1/objects/hosts/alertmanager-bridge" && method(r) == http.MethodGet:
 			http.NotFound(w, r)
 		case path == "/v1/objects/hosts/alertmanager-bridge" && r.Method == http.MethodPut:
 			_ = json.NewDecoder(r.Body).Decode(&hostBody)
-		case path == "/v1/objects/services/alertmanager-bridge!heartbeat" && r.Method == http.MethodGet:
+		case path == "/v1/objects/services/alertmanager-bridge!heartbeat" && method(r) == http.MethodGet:
 			if !svcExists {
 				http.NotFound(w, r)
 				return
@@ -193,4 +193,13 @@ func TestHeartbeat_CreatesBridgeObjects(t *testing.T) {
 	if g.hostIsRemovable(icinga2.Host{Name: "alertmanager-bridge", Vars: icinga2.Vars{"bridge_uuid": "k8s", "bridge_created": 1.0}}) {
 		t.Error("the bridge host must not be removable")
 	}
+}
+
+// method returns the HTTP method, honouring X-HTTP-Method-Override
+func method(r *http.Request) string {
+	if m := r.Header.Get("X-HTTP-Method-Override"); m != "" {
+		return m
+	}
+
+	return r.Method
 }
