@@ -34,7 +34,7 @@ export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
 if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
 
 Name:           alertmanager-icinga-bridge
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
@@ -93,23 +93,23 @@ go test ./...
 install -D -m 0755 %{name} %{buildroot}%{_bindir}/%{name}
 install -D -m 0644 packaging/systemd/%{service}.service %{buildroot}%{_unitdir}/%{service}.service
 install -D -m 0644 packaging/systemd/%{service}.sysusers %{buildroot}%{_sysusersdir}/%{name}.conf
-install -D -m 0600 packaging/systemd/%{service}.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/%{service}
 install -d -m 0750 %{buildroot}%{_sysconfdir}/%{name}
-cat > %{buildroot}%{_sysconfdir}/%{name}/host-mapping.yaml <<'MAPPING'
+install -m 0600 packaging/systemd/%{service}.environment %{buildroot}%{_sysconfdir}/%{name}/environment
+cat > %{buildroot}%{_sysconfdir}/%{name}/host-mapping.yml <<'MAPPING'
 # Host mapping, used when ALERTMANAGER_ICINGA_BRIDGE_HOST_MAPPING_FILE points here.
 # Reload with `systemctl reload alertmanager-icinga-bridge`.
 # See %{_pkgdocdir}/host-mapping.example.yaml for the format.
 defaults: {}
 labels: {}
 MAPPING
-chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/host-mapping.yaml
-cat > %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yaml <<'ALERTMANAGERS'
+chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/host-mapping.yml
+cat > %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yml <<'ALERTMANAGERS'
 # Alertmanagers to poll, used when ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE points here.
 # Reload with `systemctl reload alertmanager-icinga-bridge`.
 # See %{_pkgdocdir}/alertmanagers.example.yaml for the format.
 alertmanagers: []
 ALERTMANAGERS
-chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yaml
+chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yml
 
 %pre
 getent group %{name} >/dev/null || groupadd -r %{name}
@@ -119,6 +119,29 @@ exit 0
 
 %post
 %systemd_post %{service}.service
+
+%posttrans
+# Up to 0.2.0 the settings were /etc/sysconfig/%{service} and *.yaml files.
+# Edited ones are left as .rpmsave by the upgrade: move them to the new names
+# and keep the new defaults as .rpmnew. The service was already restarted by
+# the old package with the defaults, so restart it again if it runs.
+migrated=
+migrate() {
+    [ -f "$1" ] || return 0
+    [ -e "$2" ] && cp -p "$2" "$2.rpmnew"
+    sed -e 's#/host-mapping\.yaml#/host-mapping.yml#' -e 's#/alertmanagers\.yaml#/alertmanagers.yml#' \
+        "$1" > "$2.tmp" || { rm -f "$2.tmp"; return 0; }
+    chmod --reference="$2.rpmnew" "$2.tmp" 2>/dev/null
+    mv -f "$2.tmp" "$2" && rm -f "$1" && migrated=1
+    echo "warning: moved $1 to $2" >&2
+}
+migrate %{_sysconfdir}/sysconfig/%{service}.rpmsave %{_sysconfdir}/%{name}/environment
+migrate %{_sysconfdir}/%{name}/host-mapping.yaml.rpmsave %{_sysconfdir}/%{name}/host-mapping.yml
+migrate %{_sysconfdir}/%{name}/alertmanagers.yaml.rpmsave %{_sysconfdir}/%{name}/alertmanagers.yml
+if [ -n "$migrated" ] && [ -d /run/systemd/system ]; then
+    systemctl try-restart %{service}.service >/dev/null 2>&1 || :
+fi
+exit 0
 
 %preun
 %systemd_preun %{service}.service
@@ -132,16 +155,21 @@ exit 0
 %{_bindir}/%{name}
 %{_unitdir}/%{service}.service
 %{_sysusersdir}/%{name}.conf
-%config(noreplace) %{_sysconfdir}/sysconfig/%{service}
+%config(noreplace) %{_sysconfdir}/%{name}/environment
 %dir %attr(0750,root,%{name}) %{_sysconfdir}/%{name}
-%config(noreplace) %{_sysconfdir}/%{name}/host-mapping.yaml
-%config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yaml
+%config(noreplace) %{_sysconfdir}/%{name}/host-mapping.yml
+%config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yml
 
 %changelog
+* Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.2.1-1
+- Settings in /etc/alertmanager-icinga-bridge/environment (was
+  /etc/sysconfig/alertmanager-icinga-bridge), host-mapping.yml and
+  alertmanagers.yml (were *.yaml); existing files are carried over
+
 * Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.2.0-1
 - Poll Alertmanagers (--alertmanagers-file): reconcile services with the
   active alerts, mirror silences as downtimes, report reachability
 
 * Thu Nov 26 2026 alertmanager-icinga-bridge maintainers - 0.1.0-1
 - First package: hosts derived from alert labels, systemd unit,
-  sysconfig file and host mapping file
+  environment file and host mapping file

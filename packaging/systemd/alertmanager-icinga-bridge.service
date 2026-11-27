@@ -8,7 +8,7 @@ After=network-online.target icinga2.service
 Type=simple
 User=alertmanager-icinga-bridge
 Group=alertmanager-icinga-bridge
-EnvironmentFile=/etc/sysconfig/alertmanager-icinga-bridge
+EnvironmentFile=/etc/alertmanager-icinga-bridge/environment
 ExecStart=/usr/bin/alertmanager-icinga-bridge
 # Re-reads the host mapping file
 ExecReload=/bin/kill -HUP $MAINPID
