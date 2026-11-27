@@ -2,7 +2,7 @@
 
 The Alertmanager to Icinga bridge can receive alerts from the Prometheus Alertmanager's generic webhook receiver and creates Icinga Services for these alerts.
 
-A single bridge can serve many Alertmanagers (e.g. one per Kubernetes cluster): with `--host-labels` it derives the Icinga host from alert labels such as `cluster` and `project` and creates that host on demand. See [Many Alertmanagers, hosts from alert labels](#many-alertmanagers-hosts-from-alert-labels).
+A single bridge can serve many Alertmanagers (e.g. one per Kubernetes cluster): with `--host-labels` it derives the Icinga host from alert labels such as `cluster` and `project` and creates that host on demand, and with `--alertmanagers-file` it polls the Alertmanagers to keep Icinga in sync with their active alerts and silences. See [Many Alertmanagers, hosts from alert labels](#many-alertmanagers-hosts-from-alert-labels) and [Polling Alertmanagers](#polling-alertmanagers).
 
 Other Icinga and Prometheus integrations we provide:
 
@@ -75,7 +75,7 @@ The package installs:
 * the example Icinga configuration and mapping file under `/usr/share/doc/alertmanager-icinga-bridge`
 
 ```bash
-dnf install ./alertmanager-icinga-bridge-0.1.0-*.x86_64.rpm
+dnf install ./alertmanager-icinga-bridge-0.2.0-*.x86_64.rpm
 vi /etc/sysconfig/alertmanager-icinga-bridge
 systemctl enable --now alertmanager-icinga-bridge
 ```
@@ -167,7 +167,8 @@ Flags:
                                    ($ALERTMANAGER_ICINGA_BRIDGE_LISTEN_ADDR)
       --bearer-token=BEARER-TOKEN,...
                                    Bearer token for incoming requests (can
-                                   be repeated, e.g. one per Alertmanager)
+                                   be repeated, e.g. one per Alertmanager;
+                                   required unless only polling is used)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN)
       --tls-cert-path=STRING       Path of a certificate file for
                                    TLS-enabled webhook endpoint (full chain)
@@ -273,6 +274,35 @@ Flags:
                                    bridge services left and are older
                                    than this (0 disables host removal)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_HOST_KEEP_FOR)
+      --alertmanagers-file=STRING
+                                   YAML file listing the Alertmanagers
+                                   whose active alerts are polled;
+                                   reloaded on SIGHUP (empty disables polling)
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE)
+      --poll-interval=1m           Interval between polls of the Alertmanagers
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_INTERVAL)
+      --poll-filter=POLL-FILTER    Alertmanager matcher the polled alerts must
+                                   match, e.g. severity=~"warning|critical"
+                                   (can be repeated)
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER)
+      --poll-receiver=STRING       Only poll alerts routed to receivers
+                                   matching this regular expression
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_RECEIVER)
+      --poll-resolve-after=2       Resolve a service once its alert was
+                                   missing in this many polls in a row
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_RESOLVE_AFTER)
+      --[no-]poll-silences         Mirror silences of polled
+                                   alerts as Icinga downtimes
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_SILENCES)
+      --poll-concurrency=8         Number of Alertmanagers
+                                   polled at the same time
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_CONCURRENCY)
+      --poll-ca-file=STRING        Path of a CA certificate for the
+                                   Alertmanager URLs (default: system CAs)
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_CA)
+      --poll-insecure-tls          Skip TLS verification of
+                                   the Alertmanager URLs
+                                   ($ALERTMANAGER_ICINGA_BRIDGE_POLL_INSECURE_TLS)
 ```
 
 Most flags can be set with environment variables, refer to the help to see which flags.
@@ -584,12 +614,55 @@ receivers:
 If one alert of a notification fails, the others are still processed and the bridge answers with
 HTTP 500, so Alertmanager retries the notification.
 
+### Polling Alertmanagers
+
+Webhooks only tell the bridge about changes, so Icinga can drift from Alertmanager: an alert that is
+silenced while firing never sends "resolved", an Alertmanager that loses its state forgets to, and
+notifications sent while the bridge is down are lost until Alertmanager repeats them. With
+`--alertmanagers-file`, the bridge also polls the Alertmanagers' API (`GET /api/v2/alerts`, no
+credentials needed) and reconciles Icinga with it
+(see [`contrib/alertmanagers.example.yaml`](contrib/alertmanagers.example.yaml)):
+
+```yaml
+alertmanagers:
+  - name: xraydmz2
+    url: https://alertmanager.xraydmz2.prod.example.com
+    labels:
+      cluster: xraydmz2
+```
+
+Every `--poll-interval` (default 1m), for each Alertmanager (`--poll-concurrency` at a time):
+
+* **Active alerts** (including silenced ones, but not inhibited ones, which Alertmanager does not notify
+  about either) are handled like webhook alerts: same host, service name and result. A result is only
+  submitted if Icinga does not already show it, so a quiet poll costs one Alertmanager request and no
+  Icinga writes; heartbeat alerts are always submitted.
+* **The target's `labels`** are set on every alert (overriding the alert's own values) and identify the
+  services of this Alertmanager: those whose `vars.label_<name>` match. They are required.
+* **Gone alerts**: a non-OK service of this Alertmanager whose alert was missing in `--poll-resolve-after`
+  polls in a row (default 2) is set to OK. Nothing is resolved while the Alertmanager cannot be polled.
+* **Silences** become fixed downtimes until the silence ends, with the author
+  `alertmanager-icinga-bridge/<id>` and the silence in the comment; downtimes of expired or deleted
+  silences are removed (`--no-poll-silences` turns this off).
+* **Reachability**: the service `alertmanager` on the cluster's host (from the target's labels; on
+  `--icinga-hostname` named `alertmanager-<name>` if they do not form a host) is OK with the number of
+  alerts as perfdata, CRITICAL (after 3 failed polls) if the Alertmanager cannot be polled, and UNKNOWN
+  if the bridge stops polling. The garbage collection keeps it (`vars.bridge_kind`).
+
+Choose what to poll with `--poll-filter` (Alertmanager matchers such as `severity=~"warning|critical"`,
+repeatable; per target `filter`) and `--poll-receiver` (a regular expression for the receivers the alerts
+are routed to; per target `receiver`), as alerts with an unknown severity become UNKNOWN in Icinga. The
+file is checked at startup and re-read on `SIGHUP`. Use `--poll-ca-file` for an internal CA.
+
+Polling and webhooks can be combined: the webhook delivers changes immediately, polling corrects drift. If
+only polling is used, `--bearer-token` can be left out (the webhook then accepts nothing).
+
 ### Icinga configuration
 
 [`contrib/icinga2-multicluster.conf`](contrib/icinga2-multicluster.conf) has templates, host groups and an
 API user whose permissions are limited to the hosts of the bridge (`host.vars.bridge_uuid`) and its own
 host. The API user needs `objects/create/host` and `objects/delete/host` in addition to the service
-permissions.
+permissions, and for polling with silences `actions/schedule-downtime` and `actions/remove-downtime`.
 
 # Thanks
 

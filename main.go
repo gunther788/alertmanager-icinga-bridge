@@ -7,15 +7,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/api"
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/config"
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/gc"
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/hosts"
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/icinga2"
+	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/poller"
 
 	"github.com/alecthomas/kong"
 )
@@ -84,7 +87,6 @@ func main() {
 
 	if resolver.Enabled() {
 		logger.Info("Deriving hosts from alert labels", "component", "main", "labels", cfg.HostLabels, "mapping", cfg.HostMappingFile)
-		go reloadOnHangup(ctx, logger, resolver)
 	}
 
 	// Create and start the Service Garbage Collector
@@ -94,6 +96,41 @@ func main() {
 	// Create and start the API Listener
 	listener := api.NewListener(cfg, logger, icingaClient).WithHosts(resolver, hostManager)
 
+	reloaders := []reloader{}
+	if resolver.Path() != "" {
+		reloaders = append(reloaders, resolver)
+	}
+
+	// Poll Alertmanagers and reconcile Icinga with their active alerts
+	if cfg.AlertmanagersFile != "" {
+		alertmanagers := &poller.AlertmanagerClient{HTTP: &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: cfg.PollTLSConfig},
+		}}
+
+		poll, errPoller := poller.New(poller.Config{
+			ID:               cfg.ID,
+			Path:             cfg.AlertmanagersFile,
+			Interval:         cfg.PollInterval,
+			Filter:           cfg.PollFilter,
+			Receiver:         cfg.PollReceiver,
+			ResolveAfter:     cfg.PollResolveAfter,
+			SyncSilences:     cfg.PollSilences,
+			Concurrency:      cfg.PollConcurrency,
+			ServiceTemplates: cfg.IcingaTemplates,
+		}, alertmanagers, listener, icingaClient, logger)
+		if errPoller != nil {
+			logger.Error("Could not load Alertmanagers to poll", "component", "main", "error", errPoller.Error())
+			os.Exit(1) //nolint: gocritic
+		}
+
+		reloaders = append(reloaders, poll)
+
+		go poll.Run(ctx)
+	}
+
+	go reloadOnHangup(ctx, logger, reloaders)
+
 	//nolint: noinlineerr
 	if err := listener.Run(ctx); err != nil {
 		logger.Error("Listener has finished with an error", "component", "main", "error", err.Error())
@@ -102,8 +139,14 @@ func main() {
 	}
 }
 
-// reloadOnHangup re-reads the host mapping file whenever the process receives SIGHUP
-func reloadOnHangup(ctx context.Context, logger *slog.Logger, resolver *hosts.Resolver) {
+// reloader is a configuration file that can be re-read
+type reloader interface {
+	Reload() error
+	Path() string
+}
+
+// reloadOnHangup re-reads the host mapping and Alertmanagers files whenever the process receives SIGHUP
+func reloadOnHangup(ctx context.Context, logger *slog.Logger, reloaders []reloader) {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 
@@ -114,18 +157,19 @@ func reloadOnHangup(ctx context.Context, logger *slog.Logger, resolver *hosts.Re
 		case <-ctx.Done():
 			return
 		case <-hup:
-			if resolver.Path() == "" {
-				logger.Info("Received SIGHUP, but no host mapping file is configured", "component", "main")
-				continue
+			if len(reloaders) == 0 {
+				logger.Info("Received SIGHUP, but there are no files to reload", "component", "main")
 			}
 
-			errReload := resolver.Reload()
-			if errReload != nil {
-				logger.Error("Could not reload host mapping, keeping the previous one", "component", "main", "error", errReload.Error())
-				continue
-			}
+			for _, r := range reloaders {
+				errReload := r.Reload()
+				if errReload != nil {
+					logger.Error("Could not reload, keeping the previous configuration", "component", "main", "file", r.Path(), "error", errReload.Error())
+					continue
+				}
 
-			logger.Info("Reloaded host mapping", "component", "main", "file", resolver.Path())
+				logger.Info("Reloaded", "component", "main", "file", r.Path())
+			}
 		}
 	}
 }

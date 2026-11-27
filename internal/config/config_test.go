@@ -39,7 +39,7 @@ func TestCLIConfig_Validation(t *testing.T) {
 	}{
 		"blank tokens": {
 			have:    CLI{BearerToken: []string{" ", ""}},
-			wantErr: "at least one non-empty bearer token is required",
+			wantErr: "at least one non-empty bearer token is required (or --alertmanagers-file for polling only)",
 		},
 		"mapping without labels": {
 			have:    CLI{BearerToken: []string{"t"}, HostMappingFile: "mapping.yaml"},

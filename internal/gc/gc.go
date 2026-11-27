@@ -291,6 +291,12 @@ func (g *GarbageCollector) sendHeartbeat(ctx context.Context) error {
 
 // removeServiceIfRequired removes the given service if applicable and reports whether it was removed
 func (g *GarbageCollector) removeServiceIfRequired(ctx context.Context, service icinga2.Service) (bool, error) {
+	// Services that are not alerts (e.g. the health service of a polled Alertmanager)
+	if kind, ok := service.Vars["bridge_kind"]; ok {
+		g.logger.Debug("Skipping service that is not an alert", "component", "gc", "service", service.Name, "kind", kind)
+		return false, nil
+	}
+
 	_, heartbeat := service.Vars["label_heartbeat"]
 
 	if heartbeat && !service.HasDowntime() {

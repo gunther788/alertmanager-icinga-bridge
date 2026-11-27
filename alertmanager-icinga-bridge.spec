@@ -34,7 +34,7 @@ export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
 if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
 
 Name:           alertmanager-icinga-bridge
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
@@ -103,6 +103,13 @@ defaults: {}
 labels: {}
 MAPPING
 chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/host-mapping.yaml
+cat > %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yaml <<'ALERTMANAGERS'
+# Alertmanagers to poll, used when ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE points here.
+# Reload with `systemctl reload alertmanager-icinga-bridge`.
+# See %{_pkgdocdir}/alertmanagers.example.yaml for the format.
+alertmanagers: []
+ALERTMANAGERS
+chmod 0644 %{buildroot}%{_sysconfdir}/%{name}/alertmanagers.yaml
 
 %pre
 getent group %{name} >/dev/null || groupadd -r %{name}
@@ -121,15 +128,20 @@ exit 0
 
 %files
 %license LICENSE
-%doc README.md contrib/icinga2-example.conf contrib/icinga2-multicluster.conf contrib/host-mapping.example.yaml
+%doc README.md contrib/icinga2-example.conf contrib/icinga2-multicluster.conf contrib/host-mapping.example.yaml contrib/alertmanagers.example.yaml
 %{_bindir}/%{name}
 %{_unitdir}/%{service}.service
 %{_sysusersdir}/%{name}.conf
 %config(noreplace) %{_sysconfdir}/sysconfig/%{service}
 %dir %attr(0750,root,%{name}) %{_sysconfdir}/%{name}
 %config(noreplace) %{_sysconfdir}/%{name}/host-mapping.yaml
+%config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yaml
 
 %changelog
+* Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.2.0-1
+- Poll Alertmanagers (--alertmanagers-file): reconcile services with the
+  active alerts, mirror silences as downtimes, report reachability
+
 * Thu Nov 26 2026 alertmanager-icinga-bridge maintainers - 0.1.0-1
 - First package: hosts derived from alert labels, systemd unit,
   sysconfig file and host mapping file

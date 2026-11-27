@@ -63,6 +63,15 @@ type Config struct {
 	StaticHostVars     map[string]string
 	HostCacheTTL       time.Duration
 	HostKeepFor        time.Duration
+
+	AlertmanagersFile string
+	PollInterval      time.Duration
+	PollFilter        []string
+	PollReceiver      string
+	PollResolveAfter  int
+	PollSilences      bool
+	PollConcurrency   int
+	PollTLSConfig     *tls.Config
 }
 
 func NewConfigFromCLI(cli *CLI) (*Config, error) {
@@ -106,11 +115,40 @@ func NewConfigFromCLI(cli *CLI) (*Config, error) {
 		StaticHostVars:           cli.StaticHostVars,
 		HostCacheTTL:             cli.HostCacheTTL,
 		HostKeepFor:              cli.HostKeepFor,
+		AlertmanagersFile:        cli.AlertmanagersFile,
+		PollInterval:             cli.PollInterval,
+		PollFilter:               nonEmpty(cli.PollFilter),
+		PollReceiver:             cli.PollReceiver,
+		PollResolveAfter:         cli.PollResolveAfter,
+		PollSilences:             cli.PollSilences,
+		PollConcurrency:          cli.PollConcurrency,
 	}
 
 	conf.BearerTokens = nonEmpty(conf.BearerTokens)
-	if len(conf.BearerTokens) == 0 {
+	if len(conf.BearerTokens) == 0 && conf.AlertmanagersFile == "" {
 		return &conf, errNoBearerToken
+	}
+
+	if conf.AlertmanagersFile != "" && conf.PollInterval <= 0 {
+		return &conf, errPollInterval
+	}
+
+	conf.PollTLSConfig = &tls.Config{
+		//nolint: gosec
+		InsecureSkipVerify: cli.PollInsecureTLS,
+	}
+
+	if cli.PollCAFile != "" {
+		pollTLS, errPollTLS := NewTLSConfig(&TLSConfig{
+			InsecureSkipVerify: cli.PollInsecureTLS,
+			CAFile:             cli.PollCAFile,
+		})
+
+		if errPollTLS != nil {
+			return &conf, fmt.Errorf("error loading the Alertmanager TLS configuration %w", errPollTLS)
+		}
+
+		conf.PollTLSConfig = pollTLS
 	}
 
 	if conf.HostMappingFile != "" && len(conf.HostLabels) == 0 {
@@ -154,7 +192,8 @@ func NewConfigFromCLI(cli *CLI) (*Config, error) {
 }
 
 var (
-	errNoBearerToken        = errors.New("at least one non-empty bearer token is required")
+	errNoBearerToken        = errors.New("at least one non-empty bearer token is required (or --alertmanagers-file for polling only)")
+	errPollInterval         = errors.New("--poll-interval must be positive")
 	errMappingWithoutLabels = errors.New("a host mapping file requires --host-labels")
 )
 

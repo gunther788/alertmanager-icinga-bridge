@@ -103,7 +103,7 @@ type CLI struct {
 
 	// Alertmanager Webhook Receiver
 	ListenAddr           string   `kong:"default='127.0.0.1:8888',env='ALERTMANAGER_ICINGA_BRIDGE_LISTEN_ADDR',help='Listening address for the incoming Alertmanager requests'"`
-	BearerToken          []string `kong:"required,env='ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN',help='Bearer token for incoming requests (can be repeated, e.g. one per Alertmanager)'"`
+	BearerToken          []string `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN',help='Bearer token for incoming requests (can be repeated, e.g. one per Alertmanager; required unless only polling is used)'"`
 	TLSCertPath          string   `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_TLS_CERT',help='Path of a certificate file for TLS-enabled webhook endpoint (full chain)'"`
 	TLSKeyPath           string   `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_TLS_KEY',help='Path of a private key file for TLS-enabled webhook endpoint'"`
 	CheckCommand         string   `kong:"default='dummy',env='ALERTMANAGER_ICINGA_BRIDGE_SERVICE_CHECKS_COMMAND',help='Specify Icinga check command during service creation'"`
@@ -136,4 +136,15 @@ type CLI struct {
 	StaticHostVars     map[string]string `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_STATIC_HOST_VAR',help='Custom variable to be set for created Icinga hosts (variable=value, can be repeated)'"`
 	HostCacheTTL       time.Duration     `kong:"default='10m',env='ALERTMANAGER_ICINGA_BRIDGE_HOST_CACHE_TTL',help='How long a host is assumed to exist before it is looked up again'"`
 	HostKeepFor        time.Duration     `kong:"default='168h',env='ALERTMANAGER_ICINGA_BRIDGE_HOST_KEEP_FOR',help='Remove created hosts that have no bridge services left and are older than this (0 disables host removal)'"`
+
+	// Polling Alertmanagers
+	AlertmanagersFile string        `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE',help='YAML file listing the Alertmanagers whose active alerts are polled; reloaded on SIGHUP (empty disables polling)'"`
+	PollInterval      time.Duration `kong:"default='1m',env='ALERTMANAGER_ICINGA_BRIDGE_POLL_INTERVAL',help='Interval between polls of the Alertmanagers'"`
+	PollFilter        []string      `kong:"sep='none',env='ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER',help='Alertmanager matcher the polled alerts must match, e.g. severity=~\"warning|critical\" (can be repeated)'"`
+	PollReceiver      string        `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_POLL_RECEIVER',help='Only poll alerts routed to receivers matching this regular expression'"`
+	PollResolveAfter  int           `kong:"default='2',env='ALERTMANAGER_ICINGA_BRIDGE_POLL_RESOLVE_AFTER',help='Resolve a service once its alert was missing in this many polls in a row'"`
+	PollSilences      bool          `kong:"default='true',negatable,env='ALERTMANAGER_ICINGA_BRIDGE_POLL_SILENCES',help='Mirror silences of polled alerts as Icinga downtimes'"`
+	PollConcurrency   int           `kong:"default='8',env='ALERTMANAGER_ICINGA_BRIDGE_POLL_CONCURRENCY',help='Number of Alertmanagers polled at the same time'"`
+	PollCAFile        string        `kong:"env='ALERTMANAGER_ICINGA_BRIDGE_POLL_CA',help='Path of a CA certificate for the Alertmanager URLs (default: system CAs)'"`
+	PollInsecureTLS   bool          `kong:"default=false,env='ALERTMANAGER_ICINGA_BRIDGE_POLL_INSECURE_TLS',help='Skip TLS verification of the Alertmanager URLs'"`
 }

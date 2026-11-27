@@ -212,6 +212,154 @@ func validToken(received string, expected []string) bool {
 	return valid
 }
 
+// Plan is the Icinga check result an alert maps to
+type Plan struct {
+	// HostName is the Icinga host of the result
+	HostName string
+	// ServiceName is the short service name; empty for host check results
+	ServiceName string
+	// DisplayName of the service
+	DisplayName string
+	// ExitStatus and PluginOutput of the result
+	ExitStatus   icinga2.ExitStatus
+	PluginOutput string
+	// HostCheck is set for alerts that set the host check result (icinga_use_host_check)
+	HostCheck bool
+	// Heartbeat is set for alerts with a "heartbeat" label, which must be submitted every time
+	Heartbeat bool
+}
+
+// FullName returns the Icinga name of the checkable, "host!service" for services
+func (p *Plan) FullName() string {
+	if p.HostCheck {
+		return p.HostName
+	}
+
+	return p.HostName + "!" + p.ServiceName
+}
+
+// PlanAlert computes the check result for an alert. Hosts derived from labels are
+// created if needed; nothing else is changed in Icinga.
+func (l *Listener) PlanAlert(ctx context.Context, alert *Alert) (Plan, error) {
+	displayName, ok := alert.Labels["alertname"]
+
+	if !ok {
+		l.logger.Warn("alert does not have label 'alertname'", "alert", alert)
+	}
+
+	hostName, useHostCheck, errHost := l.hostFor(ctx, alert)
+	if errHost != nil {
+		return Plan{}, errHost
+	}
+
+	// Get the exitcode of the alert
+	exitCode := severityToExitCode(alert.Status, alert.Labels["severity"], l.severityLevels, useHostCheck)
+
+	plan := Plan{
+		HostName:  hostName,
+		HostCheck: useHostCheck,
+		// Get the Plugin Output from the first Annotation we find that has some data
+		PluginOutput: l.pluginOutputGetter.GetField(alert, exitCode),
+		ExitStatus:   exitCode,
+		DisplayName:  displayName,
+	}
+
+	if useHostCheck {
+		return plan, nil
+	}
+
+	_, plan.Heartbeat = alert.Labels["heartbeat"]
+
+	plan.ServiceName = generateServiceName(l.config.ID, *alert, l.fingerprintExcludes)
+
+	if !l.serviceNameValidator.MatchString(plan.ServiceName) {
+		return plan, fmt.Errorf("service name '%v' does not match Icinga constraints", plan.ServiceName)
+	}
+
+	if l.config.DisplayNameAsServiceName {
+		plan.DisplayName = plan.ServiceName
+	}
+
+	return plan, nil
+}
+
+// HandleAlert creates or updates the Icinga object for an alert and submits its check result
+func (l *Listener) HandleAlert(ctx context.Context, alert *Alert) error {
+	ctxIcinga, cancel := context.WithTimeout(ctx, alertTimeout)
+	defer cancel()
+
+	plan, errPlan := l.PlanAlert(ctxIcinga, alert)
+	if errPlan != nil {
+		return errPlan
+	}
+
+	return l.ApplyPlan(ctxIcinga, plan, alert)
+}
+
+// HostForLabels returns the host for alerts with these labels, creating a derived host if
+// needed, and whether it was derived from the labels (else it is --icinga-hostname)
+func (l *Listener) HostForLabels(ctx context.Context, labels map[string]string) (string, bool, error) {
+	target, ok := l.hostResolver.Resolve(labels)
+	if !ok {
+		return l.config.IcingaHostname, false, nil
+	}
+
+	if l.hostManager != nil {
+		errEnsure := l.hostManager.Ensure(ctx, target)
+		if errEnsure != nil {
+			return "", false, errEnsure
+		}
+	}
+
+	return target.Name, true, nil
+}
+
+// ApplyPlan creates or updates the service of a planned result and submits the result
+func (l *Listener) ApplyPlan(ctx context.Context, plan Plan, alert *Alert) error {
+	icingaAction := icinga2.Action{
+		ExitStatus:   plan.ExitStatus,
+		PluginOutput: plan.PluginOutput,
+	}
+
+	if plan.HostCheck { // nolint: nestif
+		l.logger.Debug("Using host check for process-check-result", "component", "listener", "alert", alert)
+
+		icingaAction.Filter = fmt.Sprintf("host.name==%q", plan.HostName)
+		icingaAction.Type = "Host"
+	} else {
+		l.logger.Debug("Using service check for process-check-result", "component", "listener", "host", plan.HostName, "alert", alert)
+
+		svc, errUpsert := l.updateOrCreateService(ctx, plan.HostName, plan.ServiceName, plan.DisplayName, plan.ExitStatus, *alert)
+
+		if errUpsert != nil {
+			// The host may have been removed in Icinga; look it up again next time
+			if l.hostManager != nil {
+				l.hostManager.Forget(plan.HostName)
+			}
+
+			return errUpsert
+		}
+
+		// If we got an empty service object, the service was not
+		// created, don't try to call process-check-result
+		if svc.Name == "" {
+			l.logger.Debug("Not processing resolved heartbeat alert", "component", "listener", "alertname", plan.DisplayName)
+
+			return nil
+		}
+
+		// heartbeat alerts will use exit code OK since they always fire and the active check will set it to not OK
+		if plan.Heartbeat {
+			icingaAction.ExitStatus = icinga2.ExitStatusOK
+		}
+
+		icingaAction.Filter = fmt.Sprintf("host.name==%q && service.name==%q", svc.HostName, svc.Name)
+		icingaAction.Type = "Service"
+	}
+
+	return l.icingaClient.ProcessCheckResult(ctx, icingaAction)
+}
+
 // handleHealthy handles health checks
 func (l *Listener) handleHealthy(w http.ResponseWriter, _ *http.Request) {
 	l.logger.Debug("Handling health check", "component", "listener")
@@ -290,97 +438,17 @@ func (l *Listener) hostFor(ctx context.Context, alert *Alert) (string, bool, err
 		return value, useHostCheck, nil
 	}
 
-	if target, ok := l.hostResolver.Resolve(alert.Labels); ok {
-		if l.hostManager != nil {
-			errEnsure := l.hostManager.Ensure(ctx, target)
-			if errEnsure != nil {
-				return "", false, errEnsure
-			}
-		}
+	// Derived from the host labels, or --icinga-hostname if the alert does not carry them
+	hostName, _, errHost := l.HostForLabels(ctx, alert.Labels)
 
-		return target.Name, false, nil
-	}
-
-	// The alert does not carry the host labels
-	return l.config.IcingaHostname, false, nil
+	return hostName, false, errHost
 }
 
-// manageAlert handles a single alert
+// manageAlert handles a single alert from a webhook
 func (l *Listener) manageAlert(ctx context.Context, alert *Alert) error {
 	l.logger.Debug("Handling alert", "component", "listener", "alert", alert)
 
-	ctxIcinga, cancel := context.WithTimeout(ctx, alertTimeout)
-	defer cancel()
-
-	displayName, ok := alert.Labels["alertname"]
-
-	if !ok {
-		l.logger.Warn("alert does not have label 'alertname'", "alert", alert)
-	}
-
-	hostName, useHostCheck, errHost := l.hostFor(ctxIcinga, alert)
-	if errHost != nil {
-		return errHost
-	}
-
-	// Get the exitcode of the alert
-	exitCode := severityToExitCode(alert.Status, alert.Labels["severity"], l.severityLevels, useHostCheck)
-
-	// Get the Plugin Output from the first Annotation we find that has some data
-	pluginOutput := l.pluginOutputGetter.GetField(alert, exitCode)
-
-	icingaAction := icinga2.Action{
-		ExitStatus:   exitCode,
-		PluginOutput: pluginOutput,
-	}
-
-	if useHostCheck { // nolint: nestif
-		l.logger.Debug("Using host check for process-check-result", "component", "listener", "alert", alert)
-
-		icingaAction.Filter = fmt.Sprintf("host.name==%q", hostName)
-		icingaAction.Type = "Host"
-	} else {
-		l.logger.Debug("Using service check for process-check-result", "component", "listener", "host", hostName, "alert", alert)
-
-		serviceName := generateServiceName(l.config.ID, *alert, l.fingerprintExcludes)
-
-		if !l.serviceNameValidator.MatchString(serviceName) {
-			return fmt.Errorf("service name '%v' does not match Icinga constraints", serviceName)
-		}
-
-		if l.config.DisplayNameAsServiceName {
-			displayName = serviceName
-		}
-
-		svc, errUpsert := l.updateOrCreateService(ctxIcinga, hostName, serviceName, displayName, exitCode, *alert)
-
-		if errUpsert != nil {
-			// The host may have been removed in Icinga; look it up again next time
-			if l.hostManager != nil {
-				l.hostManager.Forget(hostName)
-			}
-
-			return errUpsert
-		}
-
-		// If we got an empty service object, the service was not
-		// created, don't try to call process-check-result
-		if svc.Name == "" {
-			l.logger.Debug("Not processing resolved heartbeat alert", "component", "listener", "alertname", displayName)
-
-			return nil
-		}
-
-		// heartbeat alerts will use exit code OK since they always fire and the active check will set it to not OK
-		if _, ok := alert.Labels["heartbeat"]; ok {
-			icingaAction.ExitStatus = icinga2.ExitStatusOK
-		}
-
-		icingaAction.Filter = fmt.Sprintf("host.name==%q && service.name==%q", svc.HostName, svc.Name)
-		icingaAction.Type = "Service"
-	}
-
-	return l.icingaClient.ProcessCheckResult(ctxIcinga, icingaAction)
+	return l.HandleAlert(ctx, alert)
 }
 
 // updateOrCreateService either updates an existing service or creates a new service

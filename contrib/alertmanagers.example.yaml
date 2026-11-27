@@ -1,0 +1,31 @@
+# Alertmanagers polled by alertmanager-icinga-bridge (--alertmanagers-file).
+# Reload without restarting: systemctl reload alertmanager-icinga-bridge
+# (or send SIGHUP). A broken file is logged and the previous list is kept.
+#
+# Every poll (--poll-interval, default 1m) reads GET <url>/api/v2/alerts
+# (active and silenced alerts, not inhibited ones) and
+# - submits results that differ from what Icinga shows,
+# - resolves services whose alert was missing in --poll-resolve-after polls,
+# - mirrors silences as downtimes (--no-poll-silences turns this off),
+# - reports on the service "alertmanager" of the cluster's host whether the
+#   Alertmanager could be polled.
+
+alertmanagers:
+  - # Name in logs and downtime comments (default: the host of the URL)
+    name: xraydmz2
+    url: https://alertmanager.xraydmz2.prod.example.com
+    # Set on every alert of this Alertmanager (overriding the alert's own
+    # values) and identify the services that belong to it. Required.
+    labels:
+      cluster: xraydmz2
+    # Optional: extra matchers (in addition to --poll-filter)
+    filter:
+      - severity=~"warning|critical"
+    # Optional: only alerts routed to these receivers (regular expression);
+    # overrides --poll-receiver
+    # receiver: icinga
+
+  - name: xraydmz3
+    url: https://alertmanager.xraydmz3.prod.example.com
+    labels:
+      cluster: xraydmz3
