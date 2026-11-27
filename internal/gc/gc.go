@@ -399,6 +399,19 @@ func (g *GarbageCollector) removeServiceIfRequired(ctx context.Context, service 
 	return true, nil
 }
 
+// Values of vars.keep_for at or above this are nanoseconds, as written up to 0.3.1
+// (in seconds, this would be more than 30000 years)
+const keepForNanosecondsThreshold = 1e12
+
+// keepForDuration converts vars.keep_for: seconds, or nanoseconds from older versions
+func keepForDuration(val float64) time.Duration {
+	if val >= keepForNanosecondsThreshold {
+		return time.Duration(int64(val))
+	}
+
+	return time.Duration(val * float64(time.Second))
+}
+
 // isSkipableDueToAge figures out if we can skip this service
 func isSkipableDueToAge(service icinga2.Service, defaultKeepFor time.Duration) bool {
 	keepForValue, ok := service.Vars["keep_for"]
@@ -411,7 +424,7 @@ func isSkipableDueToAge(service icinga2.Service, defaultKeepFor time.Duration) b
 
 	switch val := keepForValue.(type) {
 	case float64:
-		keepFor = time.Duration(int64(val))
+		keepFor = keepForDuration(val)
 	default:
 		keepFor = defaultKeepFor
 	}

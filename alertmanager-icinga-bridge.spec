@@ -34,7 +34,7 @@ export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
 if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
 
 Name:           alertmanager-icinga-bridge
-Version:        0.3.1
+Version:        0.3.2
 Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
@@ -161,6 +161,11 @@ exit 0
 %config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yml
 
 %changelog
+* Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.3.2-1
+- vars.keep_for of services is in seconds (was nanoseconds); older values
+  are still understood
+- Example Icinga configuration documents the service variables
+
 * Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.3.1-1
 - Send API queries with a body as POST with X-HTTP-Method-Override: GET
 - Log when an Icinga endpoint answers with HTTP 5xx and the next one is tried

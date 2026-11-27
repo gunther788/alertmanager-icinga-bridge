@@ -518,7 +518,8 @@ func (l *Listener) prepareService(hostName, serviceName, displayName string, ale
 	serviceVars := make(icinga2.Vars, 2+len(l.config.StaticServiceVars))
 
 	serviceVars["bridge_uuid"] = l.config.ID
-	serviceVars["keep_for"] = l.config.KeepFor
+	// In seconds, like durations in Icinga
+	serviceVars["keep_for"] = int64(l.config.KeepFor.Seconds())
 	serviceVars = mapIcingaVariables(serviceVars, alert.Labels, "label_")
 	serviceVars = mapIcingaVariables(serviceVars, alert.Annotations, "annotation_")
 	// addStaticIcingaVariables merged the given map into the existing vars and does not override existing key

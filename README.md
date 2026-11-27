@@ -279,7 +279,8 @@ alerts. Garbage collection removes such services only while they are in a downti
 Every `--gc-interval` (default 15m):
 
 * **Services** of the bridge (`vars.bridge_uuid` matches `--id`) are removed when they are OK and their
-  last state change was more than `--keep-for` (default 168h) ago. The bridge's own services
+  last state change was more than `vars.keep_for` (from `--keep-for`, default 168h, stored in seconds)
+  ago. The bridge's own services
   (`heartbeat`, `alertmanager`) are kept.
 * **Hosts** created by the bridge are removed when no service of the bridge is left on them and they were
   created more than `--host-keep-for` (default 168h) ago; `--host-keep-for=0` keeps them.
