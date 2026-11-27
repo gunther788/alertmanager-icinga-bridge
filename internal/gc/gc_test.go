@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/config"
 	"github.com/NETWAYS/alertmanager-icinga-bridge/internal/icinga2"
@@ -270,5 +271,35 @@ func TestGCRemoveService_KeepsNonAlertServices(t *testing.T) {
 
 	if removed || err != nil {
 		t.Fatalf("the health service must be kept, got removed=%v err=%v", removed, err)
+	}
+}
+
+func TestKeepForDuration(t *testing.T) {
+	for val, want := range map[float64]time.Duration{
+		604800:          168 * time.Hour, // seconds
+		604800000000000: 168 * time.Hour, // nanoseconds, written up to 0.3.1
+		1.5:             1500 * time.Millisecond,
+		0:               0,
+	} {
+		if got := keepForDuration(val); got != want {
+			t.Errorf("%v: want %v, got %v", val, want, got)
+		}
+	}
+
+	recent := icinga2.Service{LastStateChange: float64(time.Now().Add(-time.Hour).Unix())}
+
+	recent.Vars = icinga2.Vars{"keep_for": 604800.0}
+	if !isSkipableDueToAge(recent, 0) {
+		t.Error("a service OK for an hour must be kept for 168h (seconds)")
+	}
+
+	recent.Vars = icinga2.Vars{"keep_for": 604800000000000.0}
+	if !isSkipableDueToAge(recent, 0) {
+		t.Error("a service OK for an hour must be kept for 168h (nanoseconds)")
+	}
+
+	recent.Vars = icinga2.Vars{"keep_for": 60.0}
+	if isSkipableDueToAge(recent, 0) {
+		t.Error("a service OK for an hour must not be kept for 60s")
 	}
 }

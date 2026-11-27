@@ -307,3 +307,15 @@ func method(r *http.Request) string {
 
 	return r.Method
 }
+
+func TestPrepareService_KeepForInSeconds(t *testing.T) {
+	cfg := testConfig("")
+	cfg.KeepFor = 168 * time.Hour
+
+	l := NewListener(cfg, testLogger(), nil)
+	svc := l.prepareService("h", "s", "d", Alert{Labels: map[string]string{"alertname": "a"}}, 0, -1)
+
+	if svc.Vars["keep_for"] != int64(604800) {
+		t.Fatalf("want keep_for 604800 (seconds), got %v (%T)", svc.Vars["keep_for"], svc.Vars["keep_for"])
+	}
+}
