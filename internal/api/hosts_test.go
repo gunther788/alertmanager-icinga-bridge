@@ -66,7 +66,7 @@ func (f *fakeIcinga) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeIcinga) object(w http.ResponseWriter, r *http.Request, objects map[string]map[string]any, name string, body map[string]any) {
-	switch r.Method {
+	switch method(r) {
 	case http.MethodGet:
 		attrs, ok := objects[name]
 		if !ok {
@@ -297,4 +297,13 @@ func TestAuthHandler_MultipleTokens(t *testing.T) {
 
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+// method returns the HTTP method, honouring X-HTTP-Method-Override
+func method(r *http.Request) string {
+	if m := r.Header.Get("X-HTTP-Method-Override"); m != "" {
+		return m
+	}
+
+	return r.Method
 }
