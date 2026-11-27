@@ -253,3 +253,22 @@ func TestGCRemoveService_WithInvalidKeepFor(t *testing.T) {
 		t.Fatalf("expected %v, got %v", expected, actual)
 	}
 }
+
+func TestGCRemoveService_KeepsNonAlertServices(t *testing.T) {
+	ts := testServerForDelete()
+	defer ts.Close()
+
+	config := testConfig(ts.URL)
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	gc := NewGarbageCollector(config, logger, icinga2.NewClient(config, logger))
+
+	removed, err := gc.removeServiceIfRequired(context.Background(), icinga2.Service{
+		HostName: "unittest",
+		Name:     "svc",
+		Vars:     icinga2.Vars{"keep_for": 1.0, "bridge_kind": "alertmanager"},
+	})
+
+	if removed || err != nil {
+		t.Fatalf("the health service must be kept, got removed=%v err=%v", removed, err)
+	}
+}

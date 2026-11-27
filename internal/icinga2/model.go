@@ -188,6 +188,52 @@ func (s Service) MarshalJSON() ([]byte, error) {
 	return json.Marshal(serviceAsMap)
 }
 
+// ServiceState is a service with its last check result
+type ServiceState struct {
+	Service
+
+	LastCheckResult *CheckResult `json:"last_check_result"`
+}
+
+// CheckResult is the part of a check result the bridge looks at
+type CheckResult struct {
+	ExitStatus float64 `json:"exit_status"`
+	Output     string  `json:"output"`
+}
+
+// Output returns the output of the last check result, if any
+func (s *ServiceState) Output() string {
+	if s.LastCheckResult == nil {
+		return ""
+	}
+
+	return s.LastCheckResult.Output
+}
+
+// Downtime is a scheduled downtime
+type Downtime struct {
+	// FullName is the object name, "host!service!name"
+	FullName    string  `json:"__name"`
+	Name        string  `json:"name"`
+	HostName    string  `json:"host_name"`
+	ServiceName string  `json:"service_name"`
+	Author      string  `json:"author"`
+	Comment     string  `json:"comment"`
+	StartTime   float64 `json:"start_time"`
+	EndTime     float64 `json:"end_time"`
+}
+
+// ScheduleDowntime is the request body of the schedule-downtime action
+type ScheduleDowntime struct {
+	Type      string `json:"type"`
+	Filter    string `json:"filter"`
+	Author    string `json:"author"`
+	Comment   string `json:"comment"`
+	StartTime int64  `json:"start_time"`
+	EndTime   int64  `json:"end_time"`
+	Fixed     bool   `json:"fixed"`
+}
+
 type ServiceResults struct {
 	Results []struct {
 		Service Service `json:"attrs"`

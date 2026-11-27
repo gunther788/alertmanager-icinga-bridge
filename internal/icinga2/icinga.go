@@ -24,6 +24,9 @@ const (
 	icingaActionProcessCheckResultEndpoint = "/v1/actions/process-check-result/"
 	icingaHostEndpoint                     = "/v1/objects/hosts/"
 	icingaServiceEndpoint                  = "/v1/objects/services/"
+	icingaDowntimeEndpoint                 = "/v1/objects/downtimes/"
+	icingaScheduleDowntimeEndpoint         = "/v1/actions/schedule-downtime/"
+	icingaRemoveDowntimeEndpoint           = "/v1/actions/remove-downtime/"
 )
 
 var (
@@ -541,6 +544,132 @@ func (c *Client) DeleteHost(ctx context.Context, name string) error {
 	c.logger.Debug("Deleted host at Icinga API", "component", "icinga", "host", name)
 
 	return nil
+}
+
+// GetServiceStates returns the services matching the filter with their last check results
+func (c *Client) GetServiceStates(ctx context.Context, filter string) ([]ServiceState, error) {
+	var result struct {
+		Results []struct {
+			Attrs ServiceState `json:"attrs"`
+		} `json:"results"`
+	}
+
+	body := map[string]any{
+		"filter": filter,
+		"attrs":  []string{"name", "host_name", "state", "last_state_change", "downtime_depth", "vars", "last_check_result"},
+	}
+
+	err := c.query(ctx, icingaServiceEndpoint, body, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	services := make([]ServiceState, 0, len(result.Results))
+	for _, r := range result.Results {
+		services = append(services, r.Attrs)
+	}
+
+	return services, nil
+}
+
+// GetDowntimes returns the downtimes matching the filter
+func (c *Client) GetDowntimes(ctx context.Context, filter string) ([]Downtime, error) {
+	var result struct {
+		Results []struct {
+			Attrs Downtime `json:"attrs"`
+		} `json:"results"`
+	}
+
+	err := c.query(ctx, icingaDowntimeEndpoint, QueryFilter{Filter: filter}, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	downtimes := make([]Downtime, 0, len(result.Results))
+	for _, r := range result.Results {
+		downtimes = append(downtimes, r.Attrs)
+	}
+
+	return downtimes, nil
+}
+
+// ScheduleDowntime schedules a downtime
+func (c *Client) ScheduleDowntime(ctx context.Context, downtime ScheduleDowntime) error {
+	return c.action(ctx, icingaScheduleDowntimeEndpoint, downtime)
+}
+
+// RemoveDowntime removes the downtime with the given full name ("host!service!name")
+func (c *Client) RemoveDowntime(ctx context.Context, fullName string) error {
+	return c.action(ctx, icingaRemoveDowntimeEndpoint, map[string]string{"downtime": fullName})
+}
+
+// query sends a GET request with a JSON body to an object endpoint and decodes the results
+func (c *Client) query(ctx context.Context, path string, body any, results any) error {
+	data, errMarshal := json.Marshal(body)
+
+	if errMarshal != nil {
+		return fmt.Errorf("error encoding request: %w", errMarshal)
+	}
+
+	req, errReq := http.NewRequestWithContext(ctx, http.MethodGet, "", bytes.NewReader(data))
+
+	if errReq != nil {
+		return errReq
+	}
+
+	res, errDo := c.Do(req, path)
+
+	if errDo != nil {
+		return errDo
+	}
+
+	defer closeBody(res)
+
+	// No matching objects
+	if res.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	errStatus := checkStatus(res)
+	if errStatus != nil {
+		return errStatus
+	}
+
+	errDecode := json.NewDecoder(res.Body).Decode(results)
+	if errDecode != nil {
+		return fmt.Errorf("could not unmarshal JSON: %w", errDecode)
+	}
+
+	return nil
+}
+
+// action posts a request to an action endpoint
+func (c *Client) action(ctx context.Context, path string, body any) error {
+	data, errMarshal := json.Marshal(body)
+
+	if errMarshal != nil {
+		return fmt.Errorf("error encoding request: %w", errMarshal)
+	}
+
+	req, errReq := http.NewRequestWithContext(ctx, http.MethodPost, "", bytes.NewReader(data))
+
+	if errReq != nil {
+		return errReq
+	}
+
+	res, errDo := c.Do(req, path)
+
+	if errDo != nil {
+		return errDo
+	}
+
+	defer closeBody(res)
+
+	if res.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
+
+	return checkStatus(res)
 }
 
 // StatusError is returned for responses from the Icinga API that indicate a failure
