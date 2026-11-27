@@ -180,6 +180,11 @@ func (c *Client) GetHost(ctx context.Context, name string) (Host, error) {
 		return Host{}, ErrNotFound
 	}
 
+	errStatus := checkStatus(res)
+	if errStatus != nil {
+		return Host{}, errStatus
+	}
+
 	bodyBytes, errReadBody := io.ReadAll(res.Body)
 
 	if errReadBody != nil {
@@ -226,6 +231,11 @@ func (c *Client) GetService(ctx context.Context, name string) (Service, error) {
 
 	if res.StatusCode == http.StatusNotFound {
 		return Service{}, ErrNotFound
+	}
+
+	errStatus := checkStatus(res)
+	if errStatus != nil {
+		return Service{}, errStatus
 	}
 
 	bodyBytes, errReadBody := io.ReadAll(res.Body)
@@ -280,6 +290,11 @@ func (c *Client) GetServices(ctx context.Context, filter QueryFilter) ([]Service
 
 	if res.StatusCode == http.StatusNotFound {
 		return []Service{}, ErrNotFound
+	}
+
+	errStatus := checkStatus(res)
+	if errStatus != nil {
+		return []Service{}, errStatus
 	}
 
 	bodyBytes, errReadBody := io.ReadAll(res.Body)
