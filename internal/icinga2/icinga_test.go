@@ -254,3 +254,24 @@ func TestCreateAndDeleteHost(t *testing.T) {
 		t.Errorf("want a 403 StatusError, got %v", err)
 	}
 }
+
+func TestUnauthorizedIsReported(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":401,"status":"Unauthorized. Please check your user credentials."}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	c := NewClient(testConfig(ts.URL), testLogger())
+	ctx := context.Background()
+
+	_, errHost := c.GetHost(ctx, "host")
+	_, errService := c.GetService(ctx, "host!service")
+	_, errServices := c.GetServices(ctx, QueryFilter{})
+
+	for name, err := range map[string]error{"GetHost": errHost, "GetService": errService, "GetServices": errServices} {
+		var statusErr *StatusError
+		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusUnauthorized || errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: want a 401 StatusError, got %v", name, err)
+		}
+	}
+}
