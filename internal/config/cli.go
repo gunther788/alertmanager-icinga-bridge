@@ -116,7 +116,7 @@ type CLI struct {
 	IcingaHostCheckLabels    []string `kong:"default='icinga_use_host_check',env='ALERTMANAGER_BRIDGE_ICINGA_HOST_CHECK_LABELS',help='List of Labels to be used to associate the incoming alert with the Icinga Host object instead of a Service object'"`
 	IcingaHostZoneLabels     []string `kong:"default='icinga_use_zone',env='ALERTMANAGER_BRIDGE_ICINGA_HOST_ZONE_LABELS',help='List of Labels to be used to set the zone attribute of the Icinga service object'"`
 	IcingaHostTemplateLabels []string `kong:"default='icinga_use_template',env='ALERTMANAGER_BRIDGE_ICINGA_HOST_TEMPLATE_LABELS',help='List of Labels to be used to set the included template for the Icinga service object (in addition to --templates)'"`
-	PluginOutputAnnotations  []string `kong:"default='message',env='ALERTMANAGER_ICINGA_BRIDGE_PLUGINOUTPUT_ANNOTATIONS',help='List of Annotation names to be used to set the plugin output for the Icinga service'"`
+	PluginOutputAnnotations  []string `kong:"default='description,message',env='ALERTMANAGER_ICINGA_BRIDGE_PLUGINOUTPUT_ANNOTATIONS',help='Annotations for the plugin output of the Icinga service; the first one the alert has is used'"`
 	NotesTextAnnotations     []string `kong:"default='description',env='ALERTMANAGER_BRIDGE_NOTES_TEXT_ANNOTATIONS',help='List of Annotations to be used to set the notes text for the Icinga service'"`
 	NotesURLAnnotations      []string `kong:"default='runbook_url',env='ALERTMANAGER_BRIDGE_NOTES_URL_ANNOTATIONS',help='List of Annotations to be used to set the notes URL for the Icinga service'"`
 	AlertFingerprintExcludes []string `kong:"default='severity',env='ALERTMANAGER_ICINGA_BRIDGE_ALERT_FINGERPRINT_EXCLUDES',help='Alert labels to exclude from calculating the fingerprint (can be repeated)'"`

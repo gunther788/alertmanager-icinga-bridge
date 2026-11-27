@@ -34,7 +34,7 @@ export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
 if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
 
 Name:           alertmanager-icinga-bridge
-Version:        0.3.2
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
@@ -161,6 +161,12 @@ exit 0
 %config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yml
 
 %changelog
+* Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.4.0-1
+- The description annotation is the plugin output (default
+  --plugin-output-annotations=description,message)
+- "on cluster ." at the end of the output and notes gets the alert's
+  cluster label
+
 * Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.3.2-1
 - vars.keep_for of services is in seconds (was nanoseconds); older values
   are still understood

@@ -44,6 +44,8 @@ ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/al
 
 # Services
 #ALERTMANAGER_ICINGA_BRIDGE_SERVICE_TEMPLATE=alertmanager-service
+# Plugin output: the first of these annotations the alert has
+#ALERTMANAGER_ICINGA_BRIDGE_PLUGINOUTPUT_ANNOTATIONS=description,message
 #ALERTMANAGER_ICINGA_BRIDGE_KEEP_FOR=168h
 
 #ALERTMANAGER_ICINGA_BRIDGE_LOGLEVEL=info

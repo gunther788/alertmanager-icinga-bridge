@@ -233,14 +233,19 @@ Alert labels:
   `--custom-severity-levels` (e.g. `info=0`); others become UNKNOWN (**required**)
 
 Alert annotations:
-* `description`: the service's `notes` (`--notes-text-annotations`)
-* `message`: the plugin output (`--plugin-output-annotations`)
+* `description`: the plugin output (`--plugin-output-annotations`, default `description,message`: the
+  first one the alert has) and the service's `notes` (`--notes-text-annotations`)
+* `message`: the plugin output of alerts without a `description`
 * `runbook_url`: the service's `notes_url` (`--notes-url-annotations`)
+
+A plugin output or notes text ending in `on cluster .` gets the alert's `cluster` label inserted
+(`on cluster xraydmz2.`): alert rules often reference a `cluster` label that is only added after the rule
+was evaluated, as an external label or as a label of a polled Alertmanager.
 
 ### Plugin output
 
-The plugin output is the first of the `--plugin-output-annotations` (default `message`) that the alert
-has. With `--plugin-output-by-states`, the state name is appended to the annotation name first
+The plugin output is the first of the `--plugin-output-annotations` (default `description,message`) that
+the alert has. With `--plugin-output-by-states`, the state name is appended to the annotation name first
 (`message_ok`, `message_warning`, `message_critical`, `message_unknown`), falling back to the plain name.
 
 ### Custom variables
@@ -406,9 +411,10 @@ Flags:
                                    included template for the Icinga service
                                    object (in addition to --templates)
                                    ($ALERTMANAGER_BRIDGE_ICINGA_HOST_TEMPLATE_LABELS)
-      --plugin-output-annotations=message,...
-                                   List of Annotation names to be used to set
-                                   the plugin output for the Icinga service
+      --plugin-output-annotations=description,message,...
+                                   Annotations for the plugin
+                                   output of the Icinga service;
+                                   the first one the alert has is used
                                    ($ALERTMANAGER_ICINGA_BRIDGE_PLUGINOUTPUT_ANNOTATIONS)
       --notes-text-annotations=description,...
                                    List of Annotations to be used to set

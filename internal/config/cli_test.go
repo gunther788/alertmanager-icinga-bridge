@@ -131,10 +131,10 @@ func TestCLI(t *testing.T) {
 					t.Errorf("Templates mismatch; want=%q, got=%q", wantTemplates, got.Templates[0])
 				}
 
-				wantPluginOutputAnnotations := "message"
-				if l := len(got.PluginOutputAnnotations); l != 1 {
-					t.Errorf("PluginOutputAnnotations mismatch; want=%d entries, got=%d", 1, l)
-				} else if wantPluginOutputAnnotations != got.PluginOutputAnnotations[0] {
+				wantPluginOutputAnnotations := "description"
+				if l := len(got.PluginOutputAnnotations); l != 2 {
+					t.Errorf("PluginOutputAnnotations mismatch; want=%d entries, got=%d", 2, l)
+				} else if wantPluginOutputAnnotations != got.PluginOutputAnnotations[0] || got.PluginOutputAnnotations[1] != "message" {
 					t.Errorf("PluginOutputAnnotations mismatch; want=%q, got=%q", wantPluginOutputAnnotations, got.PluginOutputAnnotations[0])
 				}
 

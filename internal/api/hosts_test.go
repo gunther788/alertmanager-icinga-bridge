@@ -319,3 +319,63 @@ func TestPrepareService_KeepForInSeconds(t *testing.T) {
 		t.Fatalf("want keep_for 604800 (seconds), got %v (%T)", svc.Vars["keep_for"], svc.Vars["keep_for"])
 	}
 }
+
+func TestWithCluster(t *testing.T) {
+	labels := map[string]string{"cluster": "xraydmz2"}
+
+	for have, want := range map[string]string{
+		"Pod default/web is crash looping on cluster .":    "Pod default/web is crash looping on cluster xraydmz2.",
+		"Pod default/web is crash looping on cluster . \n": "Pod default/web is crash looping on cluster xraydmz2.",
+		"Disk full on cluster xraydmz2.":                   "Disk full on cluster xraydmz2.",
+		"on cluster . is not at the end":                   "on cluster . is not at the end",
+		"":                                                 "",
+	} {
+		if got := withCluster(have, labels); got != want {
+			t.Errorf("%q: want %q, got %q", have, want, got)
+		}
+	}
+
+	if got := withCluster("Down on cluster .", map[string]string{}); got != "Down on cluster ." {
+		t.Errorf("without a cluster label the text must stay, got %q", got)
+	}
+}
+
+func TestPlanAlert_DescriptionAsOutput(t *testing.T) {
+	cfg := testConfig("")
+	cfg.PluginOutputAnnotations = []string{"description", "message"}
+
+	l := NewListener(cfg, testLogger(), nil)
+
+	alert := Alert{
+		Status: "firing",
+		Labels: map[string]string{"alertname": "KubePodCrashLooping", "severity": "warning", "cluster": "xraydmz2"},
+		Annotations: map[string]string{
+			"description": "Pod default/web is in waiting state (reason: CrashLoopBackOff) on cluster .",
+			"summary":     "Pod is crash looping.",
+		},
+	}
+
+	plan, err := l.PlanAlert(context.Background(), &alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Pod default/web is in waiting state (reason: CrashLoopBackOff) on cluster xraydmz2."
+	if plan.PluginOutput != want {
+		t.Errorf("output: want %q, got %q", want, plan.PluginOutput)
+	}
+
+	svc := l.prepareService("h", plan.ServiceName, plan.DisplayName, alert, plan.ExitStatus, -1)
+	if svc.Notes != want {
+		t.Errorf("notes: want %q, got %q", want, svc.Notes)
+	}
+
+	// Without a description, the message is used
+	delete(alert.Annotations, "description")
+	alert.Annotations["message"] = "Fallback"
+
+	plan, _ = l.PlanAlert(context.Background(), &alert)
+	if plan.PluginOutput != "Fallback" {
+		t.Errorf("want the message as fallback, got %q", plan.PluginOutput)
+	}
+}
