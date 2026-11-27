@@ -34,7 +34,7 @@ export GOSUMDB="${GOSUMDB:-sum.golang.org}" \
 if [ -d vendor ]; then export GOFLAGS="-mod=vendor -trimpath"; else export GOFLAGS="-mod=readonly -trimpath"; fi
 
 Name:           alertmanager-icinga-bridge
-Version:        0.2.2
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Bridge from Prometheus Alertmanager webhooks to Icinga 2
 
@@ -151,7 +151,7 @@ exit 0
 
 %files
 %license LICENSE
-%doc README.md contrib/icinga2-example.conf contrib/icinga2-multicluster.conf contrib/host-mapping.example.yaml contrib/alertmanagers.example.yaml
+%doc README.md contrib/icinga2-example.conf contrib/host-mapping.example.yaml contrib/alertmanagers.example.yaml
 %{_bindir}/%{name}
 %{_unitdir}/%{service}.service
 %{_sysusersdir}/%{name}.conf
@@ -161,6 +161,14 @@ exit 0
 %config(noreplace) %{_sysconfdir}/%{name}/alertmanagers.yml
 
 %changelog
+* Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.3.0-1
+- The bridge host is called alertmanager-bridge by default and is created,
+  with its heartbeat service, if missing
+- --host-labels defaults to cluster,project
+- The default environment file polls alertmanagers.yml and no longer
+  enables a placeholder webhook token
+- One example Icinga configuration for the multi-cluster setup
+
 * Fri Nov 27 2026 alertmanager-icinga-bridge maintainers - 0.2.2-1
 - Report Icinga API errors (e.g. HTTP 401) when looking up single hosts
   and services instead of "no objects found"

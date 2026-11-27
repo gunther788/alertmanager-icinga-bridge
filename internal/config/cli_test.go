@@ -24,7 +24,7 @@ func TestCLI(t *testing.T) {
 		wantCLI func(*testing.T, *CLI)
 	}{
 		"empty args": {
-			wantErr: "missing flags: --icinga-hostname=STRING, --icinga-password=STRING, --icinga-url=ICINGA-URL,..., --icinga-user=STRING, --id=STRING",
+			wantErr: "missing flags: --icinga-password=STRING, --icinga-url=ICINGA-URL,..., --icinga-user=STRING, --id=STRING",
 		},
 		"minimal args": {
 			haveCLI: requiredArgs,

@@ -124,3 +124,73 @@ func TestCollectHosts(t *testing.T) {
 		t.Fatalf("host removal is disabled, but deleted %v", deleted)
 	}
 }
+
+func TestHeartbeat_CreatesBridgeObjects(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		hostBody  map[string]any
+		svcBody   map[string]any
+		svcExists bool
+		results   int
+	)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		path, _ := url.PathUnescape(r.URL.EscapedPath())
+
+		switch {
+		case path == "/v1/objects/hosts/alertmanager-bridge" && r.Method == http.MethodGet:
+			http.NotFound(w, r)
+		case path == "/v1/objects/hosts/alertmanager-bridge" && r.Method == http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&hostBody)
+		case path == "/v1/objects/services/alertmanager-bridge!heartbeat" && r.Method == http.MethodGet:
+			if !svcExists {
+				http.NotFound(w, r)
+				return
+			}
+
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{map[string]any{"attrs": map[string]any{"name": "heartbeat", "host_name": "alertmanager-bridge"}}}})
+		case path == "/v1/objects/services/alertmanager-bridge!heartbeat" && r.Method == http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&svcBody)
+			svcExists = true
+		case path == "/v1/actions/process-check-result/":
+			results++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	config := testConfig(ts.URL)
+	config.ID = "k8s"
+	config.IcingaHostname = "alertmanager-bridge"
+	config.HeartbeatInterval = time.Minute
+	config.HostTemplates = []string{"generic-host"}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	g := NewGarbageCollector(config, logger, icinga2.NewClient(config, logger))
+
+	if err := g.sendHeartbeat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if vars, _ := hostBody["attrs"].(map[string]any)["vars"].(map[string]any); vars["bridge_uuid"] != "k8s" || vars["bridge_kind"] != "bridge" {
+		t.Errorf("unexpected host %v", hostBody)
+	}
+
+	attrs, _ := svcBody["attrs"].(map[string]any)
+	if attrs["vars.bridge_kind"] != "heartbeat" || attrs["check_interval"] != 180.0 || attrs["vars.dummy_state"] != 2.0 {
+		t.Errorf("unexpected service %v", svcBody)
+	}
+
+	if results != 1 {
+		t.Errorf("want 1 heartbeat result, got %d", results)
+	}
+
+	// The bridge host is never removed
+	if g.hostIsRemovable(icinga2.Host{Name: "alertmanager-bridge", Vars: icinga2.Vars{"bridge_uuid": "k8s", "bridge_created": 1.0}}) {
+		t.Error("the bridge host must not be removable")
+	}
+}

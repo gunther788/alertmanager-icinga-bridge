@@ -68,7 +68,7 @@ It constantly fires in Prometheus to act as heartbeat. Stopping the Prometheus
 container or otherwise interrupting the alert dispatching will eventually
 result in the service state to reflect this:
 
-* http://localhost:8080/dashboard#!/icingadb/service?name=Watchdog_664753abe3262835&host.name=bridge.localhost
+* http://localhost:8080/dashboard#!/icingadb/service?name=Watchdog_664753abe3262835&host.name=alertmanager-bridge
 
 ### AlertmanagerUp
 
@@ -84,4 +84,4 @@ synthetic alert; refresh the page to resolve the alert:
 Not an alert in the Prometheus configuration but a heartbeat signal created
 and managed exclusively by the Alertmanager Prometheus Bridge:
 
-* http://localhost:8080/icingadb/service?name=heartbeat&host.name=bridge.localhost
+* http://localhost:8080/icingadb/service?name=heartbeat&host.name=alertmanager-bridge

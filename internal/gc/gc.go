@@ -184,6 +184,10 @@ func (g *GarbageCollector) hostIsRemovable(host icinga2.Host) bool {
 		return false
 	}
 
+	if _, ok := host.Vars["bridge_kind"]; ok {
+		return false
+	}
+
 	if owner, _ := host.Vars[hosts.VarBridgeUUID].(string); owner != g.config.ID {
 		return false
 	}
@@ -264,8 +268,15 @@ func (g *GarbageCollector) heartbeat(ctx context.Context) {
 
 // sendHeartbeat submits the heartbeat result
 func (g *GarbageCollector) sendHeartbeat(ctx context.Context) error {
-	// Get the heartbeat service for the bridge host
+	// Get the heartbeat service for the bridge host, creating it (and the host) if needed
 	svc, errSvc := g.icingaClient.GetService(ctx, g.serviceName)
+
+	if errors.Is(errSvc, icinga2.ErrNotFound) {
+		errSvc = g.createBridgeObjects(ctx)
+		if errSvc == nil {
+			svc, errSvc = g.icingaClient.GetService(ctx, g.serviceName)
+		}
+	}
 
 	if errSvc != nil {
 		g.logger.Error("Could not fetch heartbeat service from Icinga", "component", "gc", "error", errSvc.Error())
@@ -285,6 +296,66 @@ func (g *GarbageCollector) sendHeartbeat(ctx context.Context) error {
 		g.logger.Error("Could not process-check-result for heartbeat", "component", "gc", "error", errProcess.Error())
 		return errProcess
 	}
+
+	return nil
+}
+
+// Values of vars.bridge_kind for the bridge's own objects; the garbage collection keeps them
+const (
+	kindBridge    = "bridge"
+	kindHeartbeat = "heartbeat"
+)
+
+// createBridgeObjects creates the bridge's own host (--icinga-hostname) and its heartbeat
+// service if they do not exist. Existing objects are not changed.
+func (g *GarbageCollector) createBridgeObjects(ctx context.Context) error {
+	_, errHost := g.icingaClient.GetHost(ctx, g.config.IcingaHostname)
+
+	if errors.Is(errHost, icinga2.ErrNotFound) {
+		errHost = g.icingaClient.CreateHost(ctx, g.config.IcingaHostname, g.config.HostTemplates, map[string]any{
+			"display_name":  "Alertmanager-Icinga-Bridge " + g.config.ID,
+			"check_command": "dummy",
+			"vars": map[string]any{
+				hosts.VarBridgeUUID: g.config.ID,
+				"bridge_kind":       kindBridge,
+			},
+		})
+		if errHost == nil || errors.Is(errHost, icinga2.ErrAlreadyExists) {
+			g.logger.Info("Created the bridge host", "component", "gc", "host", g.config.IcingaHostname)
+
+			errHost = nil
+		}
+	}
+
+	if errHost != nil {
+		return fmt.Errorf("could not create the bridge host %s: %w", g.config.IcingaHostname, errHost)
+	}
+
+	// Without a heartbeat for three intervals, the dummy check reports CRITICAL
+	interval := (3 * g.config.HeartbeatInterval).Seconds()
+
+	errSvc := g.icingaClient.CreateService(ctx, icinga2.Service{
+		Name:               g.config.HeartbeatService,
+		HostName:           g.config.IcingaHostname,
+		DisplayName:        "Alertmanager-Icinga-Bridge heartbeat",
+		CheckCommand:       "dummy",
+		EnableActiveChecks: true,
+		CheckInterval:      interval,
+		RetryInterval:      interval,
+		MaxCheckAttempts:   1,
+		Templates:          g.config.IcingaTemplates,
+		Vars: icinga2.Vars{
+			hosts.VarBridgeUUID: g.config.ID,
+			"bridge_kind":       kindHeartbeat,
+			"dummy_state":       icinga2.ExitStatusCritical,
+			"dummy_text":        "No heartbeat received from alertmanager-icinga-bridge " + g.config.ID,
+		},
+	})
+	if errSvc != nil {
+		return fmt.Errorf("could not create the heartbeat service %s: %w", g.serviceName, errSvc)
+	}
+
+	g.logger.Info("Created the heartbeat service", "component", "gc", "service", g.serviceName)
 
 	return nil
 }

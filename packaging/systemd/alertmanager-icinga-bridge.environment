@@ -1,45 +1,49 @@
 # Environment for alertmanager-icinga-bridge.service.
 # See `alertmanager-icinga-bridge --help` for all settings and their variables.
 # Restart the service after changes; `systemctl reload` only re-reads the
-# host mapping file.
+# host mapping and Alertmanagers files.
+# systemd strips quotes and interprets backslashes in values: put values with
+# special characters (quotes, backslashes, spaces) in single quotes.
 
 # Required
 ALERTMANAGER_ICINGA_BRIDGE_ID=k8s
 ALERTMANAGER_ICINGA_BRIDGE_ICINGA_URL=https://localhost:5665
-ALERTMANAGER_ICINGA_BRIDGE_ICINGA_HOSTNAME=alertmanager-bridge
 ALERTMANAGER_ICINGA_BRIDGE_ICINGA_USERNAME=alertmanager-bridge
-ALERTMANAGER_ICINGA_BRIDGE_ICINGA_PASSWORD=CHANGEME
-# Webhook tokens, comma-separated, e.g. one per Alertmanager
-# (not needed if the Alertmanagers are only polled)
-ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN=CHANGEME
+ALERTMANAGER_ICINGA_BRIDGE_ICINGA_PASSWORD='CHANGEME'
 
 # Icinga API TLS
 #ALERTMANAGER_ICINGA_BRIDGE_ICINGA_CA=/var/lib/icinga2/certs/ca.crt
 #ALERTMANAGER_ICINGA_BRIDGE_ICINGA_INSECURE_TLS=false
 
-# Webhook endpoint; Alertmanagers in other clusters need a reachable address and TLS.
-# The key must be readable by the alertmanager-icinga-bridge group.
-#ALERTMANAGER_ICINGA_BRIDGE_LISTEN_ADDR=0.0.0.0:8888
-#ALERTMANAGER_ICINGA_BRIDGE_TLS_CERT=/etc/alertmanager-icinga-bridge/tls.crt
-#ALERTMANAGER_ICINGA_BRIDGE_TLS_KEY=/etc/alertmanager-icinga-bridge/tls.key
+# The bridge's own host (heartbeat, alerts without host labels; created if missing)
+#ALERTMANAGER_ICINGA_BRIDGE_ICINGA_HOSTNAME=alertmanager-bridge
 
 # Hosts derived from alert labels (created on demand)
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_LABELS=cluster,project
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_MAPPING_FILE=/etc/alertmanager-icinga-bridge/host-mapping.yml
-#ALERTMANAGER_ICINGA_BRIDGE_HOST_TEMPLATE=generic-host
+#ALERTMANAGER_ICINGA_BRIDGE_HOST_TEMPLATE=alertmanager-host
 #ALERTMANAGER_ICINGA_BRIDGE_HOST_KEEP_FOR=168h
 
-# Poll the Alertmanagers listed in this file (reloaded by systemctl reload)
-#ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/alertmanagers.yml
+# Poll the Alertmanagers listed in this file
+ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/alertmanagers.yml
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_INTERVAL=1m
-#ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER=severity=~"warning|critical"
+#ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER='severity=~"warning|critical"'
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_RECEIVER=
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_RESOLVE_AFTER=2
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_SILENCES=true
 #ALERTMANAGER_ICINGA_BRIDGE_POLL_CA=/etc/pki/tls/certs/ca-bundle.crt
 
+# Webhook: tokens (comma-separated, e.g. one per Alertmanager); without any
+# token the webhook accepts nothing. Alertmanagers in other clusters need a
+# reachable address and TLS; the key must be readable by the
+# alertmanager-icinga-bridge group.
+#ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN=
+#ALERTMANAGER_ICINGA_BRIDGE_LISTEN_ADDR=0.0.0.0:8888
+#ALERTMANAGER_ICINGA_BRIDGE_TLS_CERT=/etc/alertmanager-icinga-bridge/tls.crt
+#ALERTMANAGER_ICINGA_BRIDGE_TLS_KEY=/etc/alertmanager-icinga-bridge/tls.key
+
 # Services
-#ALERTMANAGER_ICINGA_BRIDGE_SERVICE_TEMPLATE=generic-service
+#ALERTMANAGER_ICINGA_BRIDGE_SERVICE_TEMPLATE=alertmanager-service
 #ALERTMANAGER_ICINGA_BRIDGE_KEEP_FOR=168h
 
 #ALERTMANAGER_ICINGA_BRIDGE_LOGLEVEL=info

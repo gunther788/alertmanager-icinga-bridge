@@ -1,47 +1,37 @@
 # Alertmanager-Icinga-Bridge
 
-The Alertmanager to Icinga bridge can receive alerts from the Prometheus Alertmanager's generic webhook receiver and creates Icinga Services for these alerts.
+One bridge brings the alerts of many Prometheus Alertmanagers (e.g. one per Kubernetes cluster) into
+Icinga 2. Every alert becomes an Icinga service on a host derived from the alert's `cluster` and
+`project` labels; the hosts are created on demand. The bridge polls the Alertmanagers' API to keep Icinga
+in sync with their active alerts and silences, and/or receives their notifications on a webhook.
 
-A single bridge can serve many Alertmanagers (e.g. one per Kubernetes cluster): with `--host-labels` it derives the Icinga host from alert labels such as `cluster` and `project` and creates that host on demand, and with `--alertmanagers-file` it polls the Alertmanagers to keep Icinga in sync with their active alerts and silences. See [Many Alertmanagers, hosts from alert labels](#many-alertmanagers-hosts-from-alert-labels) and [Polling Alertmanagers](#polling-alertmanagers).
+This is a fork of [NETWAYS/alertmanager-icinga-bridge](https://github.com/NETWAYS/alertmanager-icinga-bridge),
+itself a fork of [vshn/signalilo](https://github.com/vshn/signalilo).
 
-Other Icinga and Prometheus integrations we provide:
+## Overview
 
-* https://github.com/NETWAYS/check_prometheus/
-* https://github.com/NETWAYS/icinga2-exporter
-* https://github.com/NETWAYS/icingaweb2-module-perfdatagraphs-prometheus
-* https://github.com/NETWAYS/notify-alertmanager
+| Alert labels | Icinga host |
+| ------------ | ----------- |
+| `cluster=xraydmz2`, `project=p-q2v7w` | `xraydmz2-p-q2v7w` |
+| the same, with the mapping `xraydmz2/p-q2v7w: system` | `xraydmz2-system` |
+| `cluster=xraydmz2` (no `project`, e.g. `Watchdog`) | `xraydmz2` |
+| no `cluster` label (webhook only) | `alertmanager-bridge` |
+| `icinga_use_host=MyHost` | `MyHost` (must exist; takes precedence) |
+
+The bridge creates and maintains in Icinga:
+
+* **`alertmanager-bridge`** (`--icinga-hostname`): the bridge's own host, with the service `heartbeat`
+  that turns CRITICAL when the bridge stops. Alerts without host labels land here.
+* **A host per cluster and project** with a service per alert (state from the `severity` label).
+* **`<cluster>!alertmanager`** (with polling): whether the cluster's Alertmanager can be polled.
+* **Downtimes** for silenced alerts (with polling).
+
+Everything it creates carries `vars.bridge_uuid = <--id>`; services and hosts that are no longer needed
+are removed again.
 
 ## Installation
 
-The `alertmanager-icinga-bridge` is available as an executable in the GitHub Releases, a container image and Linux repositories.
-
-1. Install and start the `alertmanager-icinga-bridge`
-2. Create an Icinga host and API user for Alertmanager-Icinga-Bridge
-3. Create an Icinga service template for the managed services
-
-### Container
-
-A container image is available at:
-
-```
-ghcr.io/netways/alertmanager-icinga-bridge
-```
-
-### Packages
-
-NETWAYS provides this tool via [https://packages.netways.de](https://packages.netways.de/).
-
-To install this module, follow the setup instructions for the **extras** repository.
-
-**RHEL or compatible:**
-
-`dnf install netways-alertmanager-icinga-bridge`
-
-**Ubuntu/Debian:**
-
-`apt install netways-alertmanager-icinga-bridge`
-
-### Building an RPM
+### RPM
 
 [`alertmanager-icinga-bridge.spec`](alertmanager-icinga-bridge.spec) builds the package; the GitLab
 pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) only includes the shared mock template
@@ -54,8 +44,8 @@ into its source tarball there (with the commit, shown by `--version`). Go module
 than `go.mod` requires, the Go toolchain are downloaded during the build (mock runs with `--enable-network`;
 set `GOPROXY`/`GOSUMDB` for a private proxy).
 
-The spec's `Version` (starting at 0.1.0) and `Release` are the package version: bump them for every change
-that should reach the repository, as each pipeline builds whatever the spec says.
+The spec's `Version` and `Release` are the package version: bump them for every change that should reach
+the repository, as each pipeline builds whatever the spec says.
 
 To build by hand from a checkout:
 
@@ -68,57 +58,257 @@ The package installs:
 
 * `/usr/bin/alertmanager-icinga-bridge`
 * `alertmanager-icinga-bridge.service`, running as the `alertmanager-icinga-bridge` user;
-  `systemctl reload` re-reads the host mapping file
+  `systemctl reload` re-reads the host mapping and Alertmanagers files
 * `/etc/alertmanager-icinga-bridge/` (group `alertmanager-icinga-bridge`) with
   * `environment` (mode 0600): the settings as environment variables
   * empty `host-mapping.yml` and `alertmanagers.yml`
   * put the webhook TLS certificate and key here, too
-* the example Icinga configuration and mapping file under `/usr/share/doc/alertmanager-icinga-bridge`
+* the example Icinga configuration and example files under `/usr/share/doc/alertmanager-icinga-bridge`
 
 ```bash
-dnf install ./alertmanager-icinga-bridge-0.2.1-*.x86_64.rpm
-vi /etc/alertmanager-icinga-bridge/environment
+dnf install alertmanager-icinga-bridge
+vi /etc/alertmanager-icinga-bridge/environment /etc/alertmanager-icinga-bridge/alertmanagers.yml
 systemctl enable --now alertmanager-icinga-bridge
 ```
 
-## Usage
+### Container
 
-When started, Alertmanager-Icinga-Bridge listens to HTTP requests on the following paths:
+`make build-image` builds a container image from the [`Dockerfile`](Dockerfile); configure it with the
+same environment variables.
 
-* `/webhook` Endpoint to accept alerts from Alertmanager.
-* `/healthz` returns HTTP 200 with `ok` as its payload as long as the webhook
-  serving loop is operational.
+## Quick start
 
-Example:
+1. Load [`contrib/icinga2-example.conf`](contrib/icinga2-example.conf) into Icinga (templates, host
+   groups and the API user) and adjust `k8s` (the bridge's `--id`) and the password.
+2. List the Alertmanagers in `/etc/alertmanager-icinga-bridge/alertmanagers.yml`
+   (see [Polling Alertmanagers](#polling-alertmanagers)).
+3. Set at least these in `/etc/alertmanager-icinga-bridge/environment`:
 
-```bash
-alertmanager-icinga-bridge \
- --id alertmanagerID \
- --icinga-hostname Alertmanager \
- --icinga-url "https://icinga.internal:5665" \
- --icinga-user icinga-example-api-user \
- --icinga-password icinga-example-api-password \
- --bearer-token alertmanager-example-token
+   ```
+   ALERTMANAGER_ICINGA_BRIDGE_ID=k8s
+   ALERTMANAGER_ICINGA_BRIDGE_ICINGA_URL=https://localhost:5665
+   ALERTMANAGER_ICINGA_BRIDGE_ICINGA_USERNAME=alertmanager-bridge
+   ALERTMANAGER_ICINGA_BRIDGE_ICINGA_PASSWORD='CHANGEME'
+   ALERTMANAGER_ICINGA_BRIDGE_ICINGA_CA=/var/lib/icinga2/certs/ca.crt
+   ALERTMANAGER_ICINGA_BRIDGE_HOST_TEMPLATE=alertmanager-host
+   ALERTMANAGER_ICINGA_BRIDGE_SERVICE_TEMPLATE=alertmanager-service
+   ALERTMANAGER_ICINGA_BRIDGE_ALERTMANAGERS_FILE=/etc/alertmanager-icinga-bridge/alertmanagers.yml
+   ALERTMANAGER_ICINGA_BRIDGE_POLL_FILTER='severity=~"warning|critical"'
+   ```
+
+   systemd strips quotes and interprets backslashes in this file; quote values with special characters
+   in single quotes.
+4. `systemctl enable --now alertmanager-icinga-bridge`
+
+The same settings are available as command line flags (see [Configuration](#configuration)).
+
+## Hosts from alert labels
+
+The values of the `--host-labels` (default `cluster,project`) are joined with `--host-label-separator`
+(default `-`) and prefixed with `--host-name-prefix` (default none). Characters other than letters, digits,
+`.`, `_` and `-` become `_`. The first label is required: alerts without it go to `--icinga-hostname`.
+Later labels that an alert does not carry are left out, unless the mapping file gives them a default.
+
+With polling, the labels of each Alertmanager in `alertmanagers.yml` are set on its alerts. Webhook
+alerts must carry them, e.g. as Prometheus `external_labels` or via `alert_relabel_configs`.
+
+### Mapping label values
+
+`--host-mapping-file` (e.g. `/etc/alertmanager-icinga-bridge/host-mapping.yml`) translates label values,
+for example Rancher project IDs to project names
+(see [`contrib/host-mapping.example.yaml`](contrib/host-mapping.example.yaml)):
+
+```yaml
+defaults:
+  project: cluster          # optional: value for alerts without a "project" label
+labels:
+  project:
+    xraydmz2/p-q2v7w: system   # only for cluster xraydmz2
+    p-shared: shared           # for every cluster
 ```
 
-Example for many clusters, with hosts derived from the `cluster` and `project` labels:
+A key can be scoped by the (original) values of the host labels that come before it, joined by `/`;
+scoped keys take precedence over plain ones. The file is checked at startup and re-read on `SIGHUP`
+(`systemctl reload`); if the new file is broken, the error is logged and the previous mapping stays.
+Hosts that already exist are not renamed: alerts go to the new host name, and the old host is removed
+by the garbage collection once its services are gone.
 
-```bash
-alertmanager-icinga-bridge \
- --id k8s \
- --icinga-hostname alertmanager-bridge \
- --icinga-url "https://localhost:5665" \
- --icinga-user alertmanager-bridge \
- --icinga-password icinga-example-api-password \
- --listen-addr 0.0.0.0:8888 \
- --tls-cert-path /etc/alertmanager-icinga-bridge/tls.crt \
- --tls-key-path /etc/alertmanager-icinga-bridge/tls.key \
- --bearer-token token-cluster-a,token-cluster-b \
- --host-labels cluster,project \
- --host-mapping-file /etc/alertmanager-icinga-bridge/host-mapping.yml
+### Hosts created on demand
+
+When an alert arrives for a host that does not exist yet, the bridge creates it with the
+`--host-templates` (default `generic-host`), `--host-check-command` (default `dummy`, empty leaves it
+to the templates), `--host-zone` and these custom variables:
+
+| Variable | Value |
+| -------- | ----- |
+| `vars.<label>` (e.g. `vars.cluster`, `vars.project`) | label value after mapping (`system`) |
+| `vars.<label>_source` (e.g. `vars.project_source`) | original value of a mapped label (`p-q2v7w`) |
+| `vars.bridge_uuid` | the bridge's `--id` |
+| `vars.bridge_created` | creation time (Unix seconds) |
+| `--static-host-vars` | as given |
+
+Use them in apply rules, host groups and notifications, e.g. `assign where host.vars.cluster == "xraydmz2"`.
+Known hosts are cached for `--host-cache-ttl` (default 10m), so usually only the first alert for a host
+costs an extra API call.
+
+## Polling Alertmanagers
+
+With `--alertmanagers-file`, the bridge polls the Alertmanagers' API (`GET /api/v2/alerts`, no credentials
+needed) and reconciles Icinga with it
+(see [`contrib/alertmanagers.example.yaml`](contrib/alertmanagers.example.yaml)):
+
+```yaml
+alertmanagers:
+  - name: xraydmz2
+    url: https://alertmanager.xraydmz2.prod.example.com
+    labels:
+      cluster: xraydmz2
 ```
+
+Every `--poll-interval` (default 1m), for each Alertmanager (`--poll-concurrency` at a time):
+
+* **Active alerts** (including silenced ones, but not inhibited ones, which Alertmanager does not notify
+  about either) become services as described above. A result is only submitted if Icinga does not already
+  show it, so a quiet poll costs one Alertmanager request and no Icinga writes; heartbeat alerts are always
+  submitted.
+* **The Alertmanager's `labels`** are set on every alert (overriding the alert's own values) and identify
+  its services: those whose `vars.label_<name>` match. They are required.
+* **Gone alerts**: a non-OK service of this Alertmanager whose alert was missing in `--poll-resolve-after`
+  polls in a row (default 2) is set to OK. Nothing is resolved while the Alertmanager cannot be polled.
+* **Silences** become fixed downtimes until the silence ends, with the author
+  `alertmanager-icinga-bridge/<id>` and the silence in the comment; downtimes of expired or deleted
+  silences are removed (`--no-poll-silences` turns this off).
+* **Reachability**: the service `alertmanager` on the cluster's host (from the labels; on
+  `alertmanager-bridge` named `alertmanager-<name>` if they do not form a host) is OK with the number of
+  alerts as perfdata, CRITICAL (hard after 3 failed polls) if the Alertmanager cannot be polled, and
+  UNKNOWN if the bridge stops polling.
+
+Choose what to poll with `--poll-filter` (Alertmanager matchers such as `severity=~"warning|critical"`,
+repeatable; per Alertmanager `filter`) and `--poll-receiver` (a regular expression for the receivers the
+alerts are routed to; per Alertmanager `receiver`), as alerts with an unknown severity become UNKNOWN in
+Icinga. The file is checked at startup and re-read on `SIGHUP`. Use `--poll-ca-file` for an internal CA.
+
+## Webhook
+
+Polling notices changes within `--poll-interval`; the webhook (`POST /webhook`) delivers Alertmanager's
+notifications immediately. Both can be combined, polling then corrects what the webhook misses (an alert
+silenced while firing never sends "resolved", notifications sent while the bridge is down are lost).
+
+Every Alertmanager sends its notifications with a bearer token; `--bearer-token` can be repeated (or given
+comma-separated in `ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN`), so each cluster can get its own token and be
+revoked separately. Without tokens, the webhook accepts nothing. Listen on a reachable address
+(`--listen-addr 0.0.0.0:8888`) and enable TLS (`--tls-cert-path`, `--tls-key-path`). `GET /healthz` returns
+HTTP 200 while the listener runs.
+
+Alertmanager configuration in each cluster:
+
+```yaml
+route:
+  receiver: icinga
+receivers:
+- name: icinga
+  webhook_configs:
+  - url: https://icinga.example.com:8888/webhook
+    send_resolved: true
+    http_config:
+      authorization:
+        credentials_file: /etc/alertmanager/secrets/icinga-bridge-token
+```
+
+If one alert of a notification fails, the others are still processed and the bridge answers with
+HTTP 500, so Alertmanager retries the notification.
+
+## Alerts and services
+
+Each alert becomes a service on its host, named `<alertname>_<hash of the labels>` (the labels in
+`--alert-fingerprint-excludes`, default `severity`, are left out of the hash).
+
+Alert fields:
+* `generatorURL`: the service's `action_url`
+
+Alert labels:
+* `alertname`: the service's `display_name` (**required**; `--display-name-as-service-name` uses the
+  service name instead)
+* `severity`: the state; `warning` and `critical`, `normal` (OK), or values set with
+  `--custom-severity-levels` (e.g. `info=0`); others become UNKNOWN (**required**)
+
+Alert annotations:
+* `description`: the service's `notes` (`--notes-text-annotations`)
+* `message`: the plugin output (`--plugin-output-annotations`)
+* `runbook_url`: the service's `notes_url` (`--notes-url-annotations`)
+
+### Plugin output
+
+The plugin output is the first of the `--plugin-output-annotations` (default `message`) that the alert
+has. With `--plugin-output-by-states`, the state name is appended to the annotation name first
+(`message_ok`, `message_warning`, `message_critical`, `message_unknown`), falling back to the plain name.
+
+### Custom variables
+
+All alert labels and annotations are set as custom variables, prefixed with `label_` and `annotation_`.
+Labels and annotations named `icinga_<type>_<name>` are also set as `<name>`, with the types `number` and
+`string`; an annotation wins over a label of the same name.
+
+| Alert      | Icinga      |
+| ---------- | ----------- |
+| Label: `foo: bar` | Custom Var: `label_foo = bar` |
+| Annotation: `foo: bar` | Custom Var: `annotation_foo = bar` |
+| Label: `icinga_string_foo: bar` | Custom Var: `foo = bar` |
+| Label: `icinga_number_foo: 123` | Custom Var: `foo = 123` |
+
+`--static-service-vars` adds variables to every service.
+
+### Overrides per alert
+
+| Alert label | Effect |
+| ----------- | ------ |
+| `icinga_use_host: MyHost` | Put the service on this existing host instead of the derived one (the API user needs permissions for it) |
+| `icinga_use_host_check: "true"` | Together with `icinga_use_host`: set that host's state instead (firing: DOWN, resolved: UP) |
+| `icinga_use_zone: MyZone` | Zone of the service (must exist) |
+| `icinga_use_template: MyTemplate` | Additional template of the service (must exist) |
+
+### Heartbeat alerts
+
+An alert with a label `heartbeat` set to a [Go duration](https://pkg.go.dev/time#ParseDuration) (e.g.
+`heartbeat: "24h"`) becomes an active dummy check with that interval plus 10%: every alert result resets it
+to OK, and if none arrives in time it takes the alert's severity. Use it for `Watchdog` / dead man's switch
+alerts. Garbage collection removes such services only while they are in a downtime.
+
+## Cleanup
+
+Every `--gc-interval` (default 15m):
+
+* **Services** of the bridge (`vars.bridge_uuid` matches `--id`) are removed when they are OK and their
+  last state change was more than `--keep-for` (default 168h) ago. The bridge's own services
+  (`heartbeat`, `alertmanager`) are kept.
+* **Hosts** created by the bridge are removed when no service of the bridge is left on them and they were
+  created more than `--host-keep-for` (default 168h) ago; `--host-keep-for=0` keeps them.
+  `alertmanager-bridge` is never removed.
+
+## Self-monitoring
+
+Every `--heartbeat-interval` (default 1m), the bridge submits OK to `alertmanager-bridge!heartbeat`
+(`--icinga-hostname`, `--heartbeat-service`). The bridge creates the host and the service if they do not
+exist; the service turns CRITICAL when no heartbeat arrived for three intervals. With polling, every
+Alertmanager's `alertmanager` service shows whether it can be polled.
+
+## Icinga configuration
+
+[`contrib/icinga2-example.conf`](contrib/icinga2-example.conf) has templates, host groups and an API user
+whose permissions are limited to the objects of the bridge (`host.vars.bridge_uuid`). The API user needs:
+
+* `objects/query/*`, `objects/create/host`, `objects/delete/host`
+* `objects/create/service`, `objects/modify/service`, `objects/delete/service`
+* `actions/process-check-result`
+* for polling with silences: `actions/schedule-downtime`, `actions/remove-downtime`
+
+If you create `alertmanager-bridge` yourself, set `vars.bridge_uuid` on it as well, or the permissions
+above do not cover it.
 
 ## Configuration
+
+All flags can also be set with the environment variables shown. The bridge respects `HTTP_PROXY`,
+`HTTPS_PROXY` and `NO_PROXY`.
 
 ```
 Flags:
@@ -130,7 +320,10 @@ Flags:
       --icinga-url=ICINGA-URL,...
                                    Icinga API URL (can be repeated)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_ICINGA_URL)
-      --icinga-hostname=STRING     Icinga host name to manage services for
+      --icinga-hostname="alertmanager-bridge"
+                                   Icinga host of the bridge itself:
+                                   heartbeat service and alerts without
+                                   host labels (created if missing)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_ICINGA_HOSTNAME)
       --disable-keep-alives        Disable HTTP keepalives
                                    ($ALERTMANAGER_ICINGA_BRIDGE_DISABLE_KEEPALIVES)
@@ -238,10 +431,9 @@ Flags:
                                    Custom variable to be set for created Icinga
                                    services (variable=value, can be repeated)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_STATIC_SERVICE_VAR)
-      --host-labels=HOST-LABELS,...
+      --host-labels=cluster,project,...
                                    Alert labels whose values form the Icinga
-                                   host name, e.g. cluster,project (hosts are
-                                   created on demand; empty disables this)
+                                   host name (hosts are created on demand)
                                    ($ALERTMANAGER_ICINGA_BRIDGE_HOST_LABELS)
       --host-label-separator="-"
                                    Separator between the label
@@ -305,366 +497,3 @@ Flags:
                                    the Alertmanager URLs
                                    ($ALERTMANAGER_ICINGA_BRIDGE_POLL_INSECURE_TLS)
 ```
-
-Most flags can be set with environment variables, refer to the help to see which flags.
-
-The tool respects the environment variables HTTP_PROXY, HTTPS_PROXY and NO_PROXY.
-
-## Integration to Prometheus Alertmanager
-
-The `/webhook` endpoint accepts alerts from the Alertmanager's [generic webhook receiver](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config).
-
-Alertmanager-Icinga-Bridge expects the following to be part of an alert.
-
-Alert fields:
-* `generatorURL`: Is mapped to the Icinga service `action_url`
-
-Alert labels:
-* `alertname`: Is mapped to the Icinga service `display_name` (**required**)
-* `severity`: Must either be one of `warning` or `critical`, or values set via the `--custom-severity-levels` option (**required**)
-
-Alert annotations:
-* `description`: Is mapped to the Icinga service `notes` (**required**)
-* `message`: Is appended to the Icinga service `plugin_output` (**required**)
-* `runbook_url`: Is mapped to the Icinga service `notes_url` (**optional**)
-
-You can also use the `--plugin-output-annotations` option to change the annotation used for the `plugin_output` as well as the `--plugin-output-by-states` option.
-
-### Plugin Output
-
-By default, Alertmanager-Icinga-Bridge will use the `message` annotation to set the `plugin_output` in the Icinga service.
-
-This can be changed by using the `--plugin-output-annotations` to select either a different annotation or to provide a list of annotations where the first one with a value will be used.
-
-Alternatively, if you enable `--plugin-output-by-states` then the Alertmanager-Icinga-Bridge will take the service state name (`ok`, `warning`, `critical`, or `unknown`) and suffix this to the annotation name when looking up the annotation to use for the plugin output (e.g. `message_ok`).
-
-This allows you to configure multiple annotations with different values that are then used with the corresponding service state to set the plugin output.
-
-If an annotation is not found for that specific service state then Alertmanager-Icinga-Bridge will fall back on using the annotation name as configured.
-
-### Example Alertmanager Configuration
-
-```yaml
-global:
-  resolve_timeout: 5m
-
-route:
-  group_wait: 30s
-  group_interval: 5m
-  repeat_interval: 12h
-  receiver: default
-  routes:
-  - match:
-      alertname: DeadMansSwitch
-    repeat_interval: 5m
-    receiver: deadmansswitch
-
-receivers:
-- name: default
-  webhook_configs:
-  - send_resolved: true
-    http_config:
-      bearer_token: "CHANGEME"
-    url: http://alertmanager.internal/webhook
-- name: deadmansswitch
-```
-
-## Integration with Icinga
-
-You need to create an Icinga host which the Alertmanager-Icinga-Bridge can use to manage services for.
-
-Alertmanager-Icinga-Bridge expects that it has full control over this host.
-Therefore, you should create a host for each Alertmanager-Icinga-Bridge instance which you're running.
-
-Example Icinga host:
-
-```
-object Host "alertmanager.internal"  {
-  display_name = "Alertmanager-Icinga-Bridge Example"
-  check_command = "dummy"
-  enable_passive_checks = false
-  enable_perfdata = false
-}
-```
-
-### Icinga service template
-
-You need to create an Icinga service template which Alertmanager-Icinga-Bridge can use to create own services.
-
-```
-template Service "generic-service" {
-}
-```
-
-### Icinga API user
-
-We recommend that you create an API user per Icinga host.
-This ensures that you create an API user per Alertmanager-Icinga-Bridge instance.
-
-In that case, you can restrict the API user's permissions to only interact with the host belonging to the Alertmanager-Icinga-Bridge:
-
-```
-object ApiUser "alertmanager.internal"  {
-  password = "CHANGEME"
-
-  permissions = [
-  {
-    permission = "objects/query/*"
-    filter = {{ host.name == "alertmanager.internal" }}
-  },
-  {
-    permission = "objects/create/service"
-    filter = {{ host.name == "alertmanager.internal" }}
-  },
-  {
-    permission = "objects/modify/service"
-    filter = {{ host.name == "alertmanager.internal" }}
-  },
-  {
-    permission = "objects/delete/service"
-    filter = {{ host.name == "alertmanager.internal" }}
-  },
-  {
-    permission = "actions/process-check-result"
-    filter = {{ host.name == "alertmanager.internal" }}
-  }, ]
-}
-```
-
-Note that you don't have to use the same name for the API user as for its associated  host.
-However, you have to make sure that you compare `host.name` to the name of the service host for which the API user has permissions.
-
-## Automatic Service Cleanup (Garbage Collection)
-
-Service objects in Icinga will get removed on a regular basis, following these rules:
-
-* Service object is in `OK` state
-* Last transition to `OK` state was more than `--keep-for` ago
-* `ID` the Alertmanager-Icinga-Bridge instances matches the service's `vars.bridge_uuid`
-
-All state for this garbage collection is stored in Icinga service variables.
-
-## Alertmanager-Icinga-Bridge Heartbeat
-
-The Alertmanager-Icinga-Bridge will regularly send a passive check result to a predefined heartbeat service.
-If no state update was provided, Icinga automatically marks the check as UNKNOWN.
-
-You need to configure the following service in Icinga:
-
-```
-object Service "heartbeat" {
-  check_command = "dummy"
-  check_interval = 10s
-
-  /* Set the state to CRITICAL (2) if freshness checks fail. */
-  vars.dummy_state = 2
-
-  /* Use a runtime function to retrieve the last check time and more details. */
-  vars.dummy_text = {{
-    var service = get_service(macro("$host.name$"), macro("$service.name$"))
-    var lastCheck = DateTime(service.last_check).to_string()
-
-    return "No check results received. Last result time: " + lastCheck
-  }}
-
-  /* This must match the name of the host object for the Alertmanager-Icinga-Bridge instance */
-  host_name = "alertmanager.internal"
-}
-```
-
-## Custom Variables
-
-All alert labels and annotations will be mapped to custom variables.
-Keys of labels will be prefixed with `label_` and keys of annotations with `annotation_`.
-
-If the key of an annotation or label starts with `icinga_` it will also be added as custom variable without any prefix.
-
-Since all labels and annotations are strings, type information can be provided.
-This is done by adding the type as part of the prefix (`icinga_<type>_`).
-
-Current supported types are `number` and `string`.
-
-Examples:
-
-| Alert      | Icinga      |
-| ---------- | ----------- |
-| Label: `foo: bar` | Custom Var: `label_foo = bar` |
-| Annotation: `foo: bar` | Custom Var: `annotation_foo = bar` |
-| Label: `icinga_string_foo: bar` | Custom Var: `foo = bar` |
-| Annotation: `icinga_string_foo: bar` | Custom Var: `foo = bar` |
-| Label: `icinga_number_foo: 123` | Custom Var: `foo = 123` |
-| Annotation: `icinga_number_foo: 123` | Custom Var: `foo = 123` |
-
-In case there is a label and an annotation with the `icinga_<type>` prefix, the value of the annotation will take precedence in the resulting set of custom variables.
-
-## Custom Host/Zone/Template
-
-By default, the `--icinga-hostname` is used to create services and `--templates` for the service template.
-This can be overridden by the following labels (unless configured otherwise):
-
-| Alert      | Icinga      |
-| ---------- | ----------- |
-| Label: `icinga_use_host: MyHost` | If present, use given host for the new service. The host must exist beforehand |
-| Label: `icinga_use_host_check: "true"` | If this and `icinga_use_host` are present, set the host check result for the given host |
-| Label: `icinga_use_zone: MyZone` | If present, use given zone for the new service The zone must exist beforehand |
-| Label: `icinga_use_template: MyTemplate` | If present, use given template for the new service. The template must exist beforehand |
-
-Note that, `icinga_use_host` requires the Alertmanager-Icinga-Bridge user to have the necessary permissions on the given host.
-The `icinga_use_host_check` will map "firing" alerts to the Icinga Host state "down" and "resolved" to "up".
-
-## Heartbeat Services
-
-Alertmanager-Icinga-Bridge supports creating "heartbeat services" in Icinga.
-This can be used to map alerts like a `DeadMansSwitch`. In Prometheus a "watchdog" or "dead man's switch" is an alert that is always firing to ensure alerting pipeline is working.
-
-To treat an alert as a "heartbeat", the alert must have a label `heartbeat` with a [Golang duration](https://pkg.go.dev/time#ParseDuration) as value (e.g. `heartbeat: "1d"`).
-
-To enable garbage collection on these alerts, they can be set to "downtime" in Icinga. A heartbeat service with an active downtime will be removed by the garbage collection.
-
-The Alertmanager-Icinga-Bridge will create an Icinga service check with active checks enabled and with the check interval set to the parsed duration.
-We add 10% to the parsed duration to account for network latency etc., which could otherwise lead to flapping heartbeat checks.
-
-## Many Alertmanagers, hosts from alert labels
-
-Running one bridge (and one Icinga host) per Alertmanager does not scale to dozens of clusters.
-Instead, a single bridge, e.g. on the Icinga master, can receive the alerts of all Alertmanagers and
-put each alert on an Icinga host derived from its labels:
-
-```
---host-labels=cluster,project
-```
-
-| Alert labels | Icinga host |
-| ------------ | ----------- |
-| `cluster=xraydmz2`, `project=p-q2v7w` | `xraydmz2-p-q2v7w` |
-| `cluster=xraydmz2`, `project=p-q2v7w`, with the mapping `xraydmz2/p-q2v7w: system` | `xraydmz2-system` |
-| `cluster=xraydmz2` (no `project`, e.g. `Watchdog`) | `xraydmz2` |
-| no `cluster` label | `--icinga-hostname` |
-| `icinga_use_host=MyHost` | `MyHost` (must exist; takes precedence) |
-
-* The values of the `--host-labels` are joined with `--host-label-separator` (default `-`) and
-  prefixed with `--host-name-prefix` (default none). Characters other than letters, digits, `.`,
-  `_` and `-` become `_`.
-* The first label is required: alerts without it go to `--icinga-hostname`. Later labels that an
-  alert does not carry are left out, unless the mapping file gives them a default.
-* Make sure every Alertmanager adds the labels, e.g. as Prometheus `external_labels` or via
-  `alert_relabel_configs`.
-
-### Mapping label values
-
-`--host-mapping-file` names a YAML (or JSON) file that translates label values, for example Rancher
-project IDs to project names (see [`contrib/host-mapping.example.yaml`](contrib/host-mapping.example.yaml)):
-
-```yaml
-defaults:
-  project: cluster          # optional: value for alerts without a "project" label
-labels:
-  project:
-    xraydmz2/p-q2v7w: system   # only for cluster xraydmz2
-    p-shared: shared           # for every cluster
-```
-
-A key can be scoped by the (original) values of the host labels that come before it, joined by `/`;
-scoped keys take precedence over plain ones. The file is checked at startup and re-read on `SIGHUP`
-(`systemctl reload`); if the new file is broken, the error is logged and the previous mapping stays.
-Hosts that already exist are not renamed: alerts go to the new host name, and the old host is removed
-by the garbage collection once its services are gone.
-
-### Hosts created on demand
-
-When an alert arrives for a host that does not exist yet, the bridge creates it with the
-`--host-templates` (default `generic-host`), `--host-check-command` (default `dummy`, empty leaves it
-to the templates), `--host-zone` and these custom variables:
-
-| Variable | Value |
-| -------- | ----- |
-| `vars.<label>` (e.g. `vars.cluster`, `vars.project`) | label value after mapping (`system`) |
-| `vars.<label>_source` (e.g. `vars.project_source`) | original value of a mapped label (`p-q2v7w`) |
-| `vars.bridge_uuid` | the bridge's `--id` |
-| `vars.bridge_created` | creation time (Unix seconds) |
-| `--static-host-vars` | as given |
-
-Use them in apply rules, host groups and notifications, e.g. `assign where host.vars.cluster == "xraydmz2"`.
-Known hosts are cached for `--host-cache-ttl` (default 10m), so usually only the first alert for a
-host costs an extra API call.
-
-A created host is removed by the garbage collection when no service of this bridge is left on it
-and it was created more than `--host-keep-for` (default 168h) ago; `--host-keep-for=0` keeps them.
-Only hosts whose `vars.bridge_uuid` matches `--id` are removed, never `--icinga-hostname`.
-
-### Authentication and transport
-
-Every Alertmanager sends its notifications with a bearer token; `--bearer-token` can be repeated (or
-given comma-separated in `ALERTMANAGER_ICINGA_BRIDGE_BEARER_TOKEN`), so each cluster can get its own
-token and be revoked separately. Since the Alertmanagers run elsewhere, listen on a reachable address
-(`--listen-addr 0.0.0.0:8888`) and enable TLS (`--tls-cert-path`, `--tls-key-path`).
-
-Alertmanager configuration in each cluster:
-
-```yaml
-receivers:
-- name: icinga
-  webhook_configs:
-  - url: https://icinga.example.com:8888/webhook
-    send_resolved: true
-    http_config:
-      authorization:
-        credentials_file: /etc/alertmanager/secrets/icinga-bridge-token
-```
-
-If one alert of a notification fails, the others are still processed and the bridge answers with
-HTTP 500, so Alertmanager retries the notification.
-
-### Polling Alertmanagers
-
-Webhooks only tell the bridge about changes, so Icinga can drift from Alertmanager: an alert that is
-silenced while firing never sends "resolved", an Alertmanager that loses its state forgets to, and
-notifications sent while the bridge is down are lost until Alertmanager repeats them. With
-`--alertmanagers-file`, the bridge also polls the Alertmanagers' API (`GET /api/v2/alerts`, no
-credentials needed) and reconciles Icinga with it
-(see [`contrib/alertmanagers.example.yaml`](contrib/alertmanagers.example.yaml)):
-
-```yaml
-alertmanagers:
-  - name: xraydmz2
-    url: https://alertmanager.xraydmz2.prod.example.com
-    labels:
-      cluster: xraydmz2
-```
-
-Every `--poll-interval` (default 1m), for each Alertmanager (`--poll-concurrency` at a time):
-
-* **Active alerts** (including silenced ones, but not inhibited ones, which Alertmanager does not notify
-  about either) are handled like webhook alerts: same host, service name and result. A result is only
-  submitted if Icinga does not already show it, so a quiet poll costs one Alertmanager request and no
-  Icinga writes; heartbeat alerts are always submitted.
-* **The target's `labels`** are set on every alert (overriding the alert's own values) and identify the
-  services of this Alertmanager: those whose `vars.label_<name>` match. They are required.
-* **Gone alerts**: a non-OK service of this Alertmanager whose alert was missing in `--poll-resolve-after`
-  polls in a row (default 2) is set to OK. Nothing is resolved while the Alertmanager cannot be polled.
-* **Silences** become fixed downtimes until the silence ends, with the author
-  `alertmanager-icinga-bridge/<id>` and the silence in the comment; downtimes of expired or deleted
-  silences are removed (`--no-poll-silences` turns this off).
-* **Reachability**: the service `alertmanager` on the cluster's host (from the target's labels; on
-  `--icinga-hostname` named `alertmanager-<name>` if they do not form a host) is OK with the number of
-  alerts as perfdata, CRITICAL (after 3 failed polls) if the Alertmanager cannot be polled, and UNKNOWN
-  if the bridge stops polling. The garbage collection keeps it (`vars.bridge_kind`).
-
-Choose what to poll with `--poll-filter` (Alertmanager matchers such as `severity=~"warning|critical"`,
-repeatable; per target `filter`) and `--poll-receiver` (a regular expression for the receivers the alerts
-are routed to; per target `receiver`), as alerts with an unknown severity become UNKNOWN in Icinga. The
-file is checked at startup and re-read on `SIGHUP`. Use `--poll-ca-file` for an internal CA.
-
-Polling and webhooks can be combined: the webhook delivers changes immediately, polling corrects drift. If
-only polling is used, `--bearer-token` can be left out (the webhook then accepts nothing).
-
-### Icinga configuration
-
-[`contrib/icinga2-multicluster.conf`](contrib/icinga2-multicluster.conf) has templates, host groups and an
-API user whose permissions are limited to the hosts of the bridge (`host.vars.bridge_uuid`) and its own
-host. The API user needs `objects/create/host` and `objects/delete/host` in addition to the service
-permissions, and for polling with silences `actions/schedule-downtime` and `actions/remove-downtime`.
-
-# Thanks
-
-This is a fork of https://github.com/vshn/signalilo
